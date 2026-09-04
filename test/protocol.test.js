@@ -45,6 +45,7 @@ test('answer / result / next / gameover bounds', () => {
   assert.equal(validateMessage({ t: 'result', q: 2, winner: 'host', hostAns: 7, guestAns: null }), null);
   assert.equal(validateMessage({ t: 'result', q: 2, winner: 'host' }), null); // undefined answers
   assert.ok(validateMessage({ t: 'next', q: 5 }));
+  assert.deepEqual(validateMessage({ t: 'ready', junk: 1 }), { t: 'ready' });
   assert.equal(validateMessage({ t: 'next', q: '5' }), null);
   assert.ok(validateMessage({ t: 'gameover', host: 3, guest: 7 }));
   assert.equal(validateMessage({ t: 'gameover', host: -1, guest: 7 }), null);
@@ -61,6 +62,7 @@ test('sanitizeName strips control/bidi chars and clamps', () => {
   assert.equal(sanitizeName('ab\u202ecd e\u200b'), 'abcd e');
   assert.equal(sanitizeName('a\u0000b\u001fc\u007fd'), 'abcd');
   assert.equal(sanitizeName('x'.repeat(100)).length, 16);
+  assert.equal(sanitizeName('Guest<img src=x onerror=1>'), 'Guest<img src=x'); // no trailing space after clamp
   assert.equal(sanitizeName('   '), 'Player');
   assert.equal(sanitizeName(42), 'Player');
   assert.equal(sanitizeName('a\n\n b'), 'a b');

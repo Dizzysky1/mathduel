@@ -6,6 +6,10 @@ import {
 
 const CONNECT_TIMEOUT_MS = 15000;
 const MAX_RAW_MESSAGE_CHARS = 4096;
+// WebRTC close detection can lag by a long time (or never fire when a tab is
+// killed), so we run an application-level heartbeat on top of the channel.
+const HEARTBEAT_INTERVAL_MS = 2500;
+const HEARTBEAT_TIMEOUT_MS = 10000;
 
 function getPeerCtor() {
   const P = globalThis.Peer;
@@ -22,6 +26,8 @@ export class NetSession {
     this.handlers = { message: [], open: [], close: [], error: [] };
     this.allow = makeRateLimiter();
     this.closed = false;
+    this.lastSeen = 0;
+    this.heartbeat = null;
   }
 
   on(evt, fn) { this.handlers[evt].push(fn); return this; }
@@ -41,12 +47,29 @@ export class NetSession {
         attempts++;
         const code = randomRoomCode();
         const peer = new Peer(roomCodeToPeerId(code), peerOptions());
+        let settled = false;
         const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
           peer.destroy();
           reject(new Error('Signalling server timeout. Check your connection.'));
         }, CONNECT_TIMEOUT_MS);
-        peer.on('open', () => {
+        // Bootstrap-only error handler; detached once the id is claimed so a
+        // later transient signalling error cannot tear down a live match.
+        const onBootError = (e) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
+          peer.destroy();
+          if (e?.type === 'unavailable-id' && attempts < 5) { tryCode(); return; }
+          reject(new Error(describePeerError(e)));
+        };
+        peer.on('error', onBootError);
+        peer.on('open', () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          peer.off('error', onBootError);
           this.peer = peer;
           this.roomCode = code;
           peer.on('connection', (conn) => {
@@ -55,12 +78,6 @@ export class NetSession {
           });
           peer.on('error', (e) => this._peerError(e));
           resolve(code);
-        });
-        peer.on('error', (e) => {
-          clearTimeout(timer);
-          if (e?.type === 'unavailable-id' && attempts < 5) { peer.destroy(); tryCode(); return; }
-          peer.destroy();
-          reject(new Error(describePeerError(e)));
         });
       };
       tryCode();
@@ -102,12 +119,35 @@ export class NetSession {
   }
 
   _attach(conn, alreadyOpen = false) {
+    // The *connecting* peer picks the serialization. Only JSON is acceptable:
+    // BinaryPack chunk reassembly in PeerJS buffers without bound.
+    if (conn.serialization !== 'json') { try { conn.close(); } catch { /* ignore */ } return; }
     this.conn = conn;
     conn.on('data', (raw) => this._onData(raw));
-    conn.on('close', () => { if (!this.closed) { this.closed = true; this.emit('close'); } });
+    conn.on('close', () => this._lost());
     conn.on('error', (e) => this.emit('error', new Error(describePeerError(e))));
-    if (alreadyOpen) this.emit('open');
-    else conn.on('open', () => this.emit('open'));
+    const onOpen = () => { this._startHeartbeat(); this.emit('open'); };
+    if (alreadyOpen) onOpen();
+    else conn.on('open', onOpen);
+  }
+
+  _startHeartbeat() {
+    this.lastSeen = Date.now();
+    clearInterval(this.heartbeat);
+    this.heartbeat = setInterval(() => {
+      if (this.closed) { clearInterval(this.heartbeat); return; }
+      if (Date.now() - this.lastSeen > HEARTBEAT_TIMEOUT_MS) { this._lost(); return; }
+      this.send({ t: 'ping' });
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** Peer is gone (clean close, or heartbeat timeout). Emits 'close' exactly once. */
+  _lost() {
+    if (this.closed) return;
+    this.closed = true;
+    clearInterval(this.heartbeat);
+    try { this.conn?.close(); } catch { /* ignore */ }
+    this.emit('close');
   }
 
   _peerError(e) {
@@ -117,15 +157,17 @@ export class NetSession {
 
   _onData(raw) {
     if (!this.allow()) return; // flood: drop silently
-    let obj = raw;
-    if (typeof raw === 'string') {
-      if (raw.length > MAX_RAW_MESSAGE_CHARS) return;
-      try { obj = JSON.parse(raw); } catch { return; }
-    } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
-      return; // binary is never valid for this protocol
-    }
-    const msg = validateMessage(obj);
+    // PeerJS hands us already-decoded values. Only plain objects of bounded
+    // size are acceptable; everything else (strings, binary, giant blobs) is dropped.
+    if (!raw || typeof raw !== 'object' || ArrayBuffer.isView(raw) || raw instanceof ArrayBuffer) return;
+    let size = 0;
+    try { size = JSON.stringify(raw).length; } catch { return; }
+    if (size > MAX_RAW_MESSAGE_CHARS) return;
+    const msg = validateMessage(raw);
     if (!msg) return;
+    this.lastSeen = Date.now();
+    if (msg.t === 'ping') { this.send({ t: 'pong' }); return; }
+    if (msg.t === 'pong') return;
     this.emit('message', msg);
   }
 
@@ -139,6 +181,7 @@ export class NetSession {
 
   close() {
     this.closed = true;
+    clearInterval(this.heartbeat);
     try { this.conn?.close(); } catch { /* ignore */ }
     try { this.peer?.destroy(); } catch { /* ignore */ }
     this.conn = null;

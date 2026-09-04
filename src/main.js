@@ -11,6 +11,7 @@ import {
 const $ = (id) => document.getElementById(id);
 const REVEAL_MS = 2600;
 const REPO_URL = 'https://github.com/Dizzysky1/mathduel';
+const gradeLabel = (g) => (g === 'mixed' ? 'Mixed grades 8-12' : `Grade ${g}`);
 
 // ---------- screens ----------
 const screens = ['home', 'lobby', 'handoff', 'game', 'over'];
@@ -247,7 +248,7 @@ class CpuGame {
     endMatch({
       title: outcomeTitle(m, 'a', this.names),
       scoreText: `${m.scores.a} – ${m.scores.b}`,
-      detail: `${this.names.a} vs ${this.names.b} · Grade ${this.settings.grade}`,
+      detail: `${this.names.a} vs ${this.names.b} · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
     });
   }
@@ -330,7 +331,7 @@ class LocalGame {
     endMatch({
       title: a === b ? 'Draw' : `${this.names[a > b ? 'a' : 'b']} wins!`,
       scoreText: `${a} – ${b}`,
-      detail: `Pass & play · Grade ${this.settings.grade}`,
+      detail: `Pass & play · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
     });
   }
@@ -353,8 +354,11 @@ class OnlineGame {
     this.hostNonce = null;
     this.hostCommit = null;
     this.guestNonce = null;
+    this.starting = false; // guest: 'start' handshake in flight (guards the await)
+    this.myClaim = null; // guest: { q, correct, value } for the current question
     this.rematch = { me: false, them: false };
     this.nextTimer = null;
+    this.watchdog = null;
     this.over = false;
     net.on('message', (m) => this.onMessage(m).catch((e) => this.abort(`Protocol error: ${e.message}`)));
     net.on('close', () => this.onDisconnect());
@@ -366,73 +370,112 @@ class OnlineGame {
     // can steer the question seed.
     this.hostNonce = randomNonceHex();
     this.hostCommit = await sha256Hex(this.hostNonce);
+    if (this.over) return;
     this.net.send({ t: 'hello', v: PROTOCOL_VERSION, name: this.settings.name, commit: this.hostCommit });
+    this.armWatchdog(20000, 'Opponent did not respond to the handshake.');
   }
 
+  /** Abort if the peer goes quiet for longer than a phase should ever take. */
+  armWatchdog(ms, reason) {
+    clearTimeout(this.watchdog);
+    this.watchdog = setTimeout(() => this.abort(reason), ms);
+  }
+
+  clearWatchdog() { clearTimeout(this.watchdog); this.watchdog = null; }
+
   async onMessage(m) {
+    if (this.over) return;
     const isHost = this.role === 'host';
     switch (m.t) {
-      case 'hello': {
-        if (isHost) return;
+      case 'hello': { // host -> guest: commit to the seed nonce
+        if (isHost || this.match || this.starting || this.hostCommit) return;
         this.names.a = m.name;
         this.hostCommit = m.commit;
         this.guestNonce = randomNonceHex();
         this.net.send({ t: 'hello_ack', v: PROTOCOL_VERSION, name: this.settings.name, nonce: this.guestNonce });
         $('lobby-status').textContent = `Connected to ${m.name}. Waiting for host to start…`;
+        this.armWatchdog(20000, 'Host did not start the match.');
         return;
       }
-      case 'hello_ack': {
-        if (!isHost || !this.hostNonce || this.match) return;
+      case 'hello_ack': { // guest -> host: guest nonce
+        if (!isHost || !this.hostNonce || this.match || this.guestNonce) return;
         this.names.b = m.name;
         this.guestNonce = m.nonce;
         const seed = hashSeed(this.hostNonce + this.guestNonce);
         this.match = new Match({ seed, grade: this.settings.grade, rounds: this.settings.rounds, timeLimit: this.settings.timeLimit });
         this.net.send({ t: 'start', nonce: this.hostNonce, grade: this.settings.grade, rounds: this.settings.rounds, timeLimit: this.settings.timeLimit });
         this.enterGame();
-        this.nextTimer = setTimeout(() => this.hostAdvance(), 1200);
+        // First question goes out once the guest confirms it built its mirror.
+        this.armWatchdog(20000, 'Opponent never confirmed the match start.');
         return;
       }
-      case 'start': {
-        if (isHost || !this.hostCommit || !this.guestNonce || this.match) return;
+      case 'start': { // host -> guest: reveal nonce + settings
+        if (isHost || !this.hostCommit || !this.guestNonce || this.match || this.starting) return;
+        this.starting = true;
         const commit = await sha256Hex(m.nonce);
+        if (this.over) return;
         if (commit !== this.hostCommit) return this.abort('Seed verification failed. The host may be running a modified client.');
         const seed = hashSeed(m.nonce + this.guestNonce);
         this.settings = { ...this.settings, grade: m.grade, rounds: m.rounds, timeLimit: m.timeLimit };
         this.match = new Match({ seed, grade: m.grade, rounds: m.rounds, timeLimit: m.timeLimit });
+        this.starting = false;
         this.enterGame();
+        this.net.send({ t: 'ready' });
+        this.armWatchdog(15000, 'Host never sent the first question.');
         return;
       }
-      case 'next': {
+      case 'ready': { // guest -> host: mirror built, send questions
+        if (!isHost || !this.match || this.match.index !== -1 || this.match.phase !== 'idle') return;
+        this.clearWatchdog();
+        this.nextTimer = setTimeout(() => this.hostAdvance(), 800);
+        return;
+      }
+      case 'next': { // host -> guest
         if (isHost || !this.match) return;
+        // A 'next' while we still hold an unresolved claim means the host is
+        // skipping a question it owes us a result for.
+        if (this.match.phase === 'question' && this.myClaim?.q === this.match.index) {
+          return this.abort('Host skipped a question without reporting a result. Match voided.');
+        }
         if (m.q !== this.match.index + 1) return this.abort('Out-of-order question from host.');
         if (!this.match.next()) return this.abort('Host advanced past the end of the match.');
         this.showQuestion();
         return;
       }
-      case 'answer': {
+      case 'answer': { // guest -> host
         if (!isHost || !this.match || this.match.phase !== 'question' || m.q !== this.match.index) return;
         const res = this.match.submit('b', m.value);
         if (res.accepted && this.match.phase === 'reveal') this.hostReveal();
         return;
       }
-      case 'result': {
+      case 'result': { // host -> guest
         if (isHost || !this.match || this.match.phase !== 'question' || m.q !== this.match.index) return;
         const q = this.match.current;
         const winner = m.winner === 'host' ? 'a' : m.winner === 'guest' ? 'b' : null;
-        // Verify the host's claim against our own copy of the question.
+        // Verify every claim against our own copy of the question.
         if (winner === 'a' && !checkAnswer(q, m.hostAns)) return this.abort('Host claimed a point with a wrong answer. Match voided.');
         if (winner === 'b' && !checkAnswer(q, m.guestAns)) return this.abort('Host reported an inconsistent result. Match voided.');
-        this.match.applyExternal(winner, { a: m.hostAns, b: m.guestAns });
+        // If we answered correctly, the only honest outcomes are "we won" or
+        // "host was correct and first". Anything else is the host burying our point.
+        const claim = this.myClaim?.q === m.q ? this.myClaim : null;
+        if (claim?.correct && winner !== 'b' && winner !== 'a') return this.abort('Host discarded a correct answer. Match voided.');
+        const guestAns = claim ? claim.value : null; // never trust the host's echo of our own answer
+        this.match.applyExternal(winner, { a: m.hostAns, b: guestAns });
+        this.myClaim = null;
         this.revealUI();
+        this.armWatchdog(REVEAL_MS + 8000, 'Host stopped responding.');
         return;
       }
-      case 'gameover': {
+      case 'gameover': { // host -> guest
         if (isHost || !this.match) return;
+        if (this.match.phase === 'question') return this.abort('Host ended the match mid-question. Match voided.');
+        if (!this.match.finishedAfterCurrent) return this.abort('Host ended the match early. Match voided.');
         if (m.host !== this.match.scores.a || m.guest !== this.match.scores.b) return this.abort('Final score mismatch. Match voided.');
         this.finish();
         return;
       }
-      case 'rematch': {
+      case 'rematch': { // either direction, only once a match has ended
+        if (!this.over || !this.match) return;
         this.rematch.them = true;
         $('over-detail').textContent = `${this.names[this.theirSide]} wants a rematch.`;
         this.maybeRematch();
@@ -444,6 +487,7 @@ class OnlineGame {
   }
 
   enterGame() {
+    this.clearWatchdog();
     $('score-a-name').textContent = this.names.a;
     $('score-b-name').textContent = this.names.b;
     updateScores(0, 0);
@@ -458,13 +502,19 @@ class OnlineGame {
 
   showQuestion() {
     const m = this.match;
+    this.myClaim = null;
     renderQuestion(m.current, { index: m.index, rounds: m.rounds, suddenDeath: m.isSuddenDeath });
     startTimer(m.timeLimit, () => {
       if (this.role === 'host') { m.timeout(); this.hostReveal(); } else { setInputEnabled(false); }
     });
+    if (this.role === 'guest') {
+      // The host owes us a 'result' within the time limit (+ latency slack).
+      this.armWatchdog(m.timeLimit * 1000 + 8000, 'Host stopped responding.');
+    }
   }
 
   hostAdvance() {
+    if (this.over) return;
     const m = this.match;
     if (!m.next()) {
       this.net.send({ t: 'gameover', host: m.scores.a, guest: m.scores.b });
@@ -487,9 +537,11 @@ class OnlineGame {
       }
       if (m.phase === 'reveal') this.hostReveal();
     } else {
-      // Guest: instant local feedback, host confirms ordering.
+      // Guest: instant local feedback, host confirms ordering. Remember our
+      // own verdict so the host cannot later pretend we were wrong.
       if (m.locked.b) return;
       const correct = checkAnswer(m.current, value);
+      this.myClaim = { q: m.index, correct, value };
       m.locked.b = true;
       m.answers.b = value;
       setInputEnabled(false);
@@ -528,17 +580,18 @@ class OnlineGame {
 
   finish() {
     this.over = true;
+    this.clearWatchdog();
     const m = this.match;
     endMatch({
       title: outcomeTitle(m, this.mySide, this.names),
       scoreText: `${m.scores.a} – ${m.scores.b}`,
-      detail: `${this.names.a} vs ${this.names.b} · Grade ${this.settings.grade}`,
+      detail: `${this.names.a} vs ${this.names.b} · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
     });
   }
 
   requestRematch() {
-    if (this.rematch.me) return;
+    if (this.rematch.me || !this.over || !this.match || !this.net.conn) return;
     this.rematch.me = true;
     this.net.send({ t: 'rematch' });
     $('btn-rematch').disabled = true;
@@ -549,15 +602,21 @@ class OnlineGame {
   maybeRematch() {
     if (!(this.rematch.me && this.rematch.them)) return;
     this.rematch = { me: false, them: false };
+    clearTimeout(this.nextTimer);
+    this.nextTimer = null;
+    this.clearWatchdog();
     this.match = null;
     this.over = false;
+    this.hostNonce = null;
     this.hostCommit = null;
     this.guestNonce = null;
+    this.starting = false;
+    this.myClaim = null;
     $('lobby-title').textContent = 'Rematch';
     $('lobby-code').textContent = '';
     $('lobby-status').textContent = 'Starting…';
     show('lobby');
-    if (this.role === 'host') this.beginHandshake();
+    if (this.role === 'host') this.beginHandshake().catch((e) => this.abort(e.message));
   }
 
   onDisconnect() {
@@ -574,6 +633,7 @@ class OnlineGame {
     this.over = true;
     stopTimer();
     clearTimeout(this.nextTimer);
+    this.clearWatchdog();
     const m = this.match;
     this.net.close();
     endMatch({
@@ -584,7 +644,13 @@ class OnlineGame {
     });
   }
 
-  quit() { stopTimer(); clearTimeout(this.nextTimer); this.over = true; this.net.close(); }
+  quit() {
+    stopTimer();
+    clearTimeout(this.nextTimer);
+    this.clearWatchdog();
+    this.over = true;
+    this.net.close();
+  }
 }
 
 // ---------- wiring ----------
@@ -610,10 +676,12 @@ async function hostOnline() {
     $('btn-copy').hidden = false;
     $('lobby-status').textContent = 'Waiting for an opponent…';
     show('lobby');
-    active = new OnlineGame(settings, net);
+    const game = new OnlineGame(settings, net);
+    active = game;
     net.on('open', () => {
+      if (active !== game) return; // user moved on before the opponent arrived
       $('lobby-status').textContent = 'Opponent connected. Starting…';
-      active.beginHandshake().catch((e) => active.abort(e.message));
+      game.beginHandshake().catch((e) => game.abort(e.message));
     });
   } catch (e) {
     net.close();

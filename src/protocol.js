@@ -29,7 +29,8 @@ export function sanitizeName(raw) {
     .replace(UNSAFE_NAME_CHARS, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, NAME_MAX);
+    .slice(0, NAME_MAX)
+    .trim();
   return cleaned.length ? cleaned : 'Player';
 }
 
@@ -106,6 +107,7 @@ export function validateMessage(msg) {
       case 'gameover': // host -> guest
         if (!isInt(msg.host, 0, 1000) || !isInt(msg.guest, 0, 1000)) return null;
         return { t, host: msg.host, guest: msg.guest };
+      case 'ready': // guest -> host: mirror built, send the first question
       case 'rematch': // either direction
       case 'ping':
       case 'pong':

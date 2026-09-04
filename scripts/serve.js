@@ -1,6 +1,6 @@
 // Minimal static dev server (no dependencies). Not used in production.
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,9 +20,11 @@ createServer(async (req, res) => {
     if (p.endsWith('/')) p += 'index.html';
     const file = normalize(join(root, p));
     if (!file.startsWith(root + sep)) { res.writeHead(403); return res.end(); }
-    const s = await stat(file);
+    const real = await realpath(file); // follow symlinks, then re-check containment
+    if (!real.startsWith(root + sep)) { res.writeHead(403); return res.end(); }
+    const s = await stat(real);
     if (!s.isFile()) { res.writeHead(404); return res.end(); }
-    const body = await readFile(file);
+    const body = await readFile(real);
     res.writeHead(200, {
       'content-type': types[extname(file)] || 'application/octet-stream',
       'cache-control': 'no-store',
