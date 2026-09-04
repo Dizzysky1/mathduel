@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="MathDuel: a real-time 1v1 math race for grades 8-12. Host a room, share the code, first correct answer wins the point.">
+  <meta name="theme-color" content="#0f172a">
+  <title>MathDuel</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <noscript><p class="noscript">MathDuel needs JavaScript to run.</p></noscript>
+
+  <main id="app">
+    <!-- HOME -->
+    <section id="screen-home" class="screen active" aria-labelledby="title">
+      <header class="hero">
+        <h1 id="title">Math<span>Duel</span></h1>
+        <p class="tagline">Race a friend. First correct answer takes the point.</p>
+      </header>
+
+      <form id="home-form" class="card" autocomplete="off">
+        <div class="field">
+          <label for="name">Your name</label>
+          <input id="name" name="name" type="text" maxlength="16" placeholder="Player" spellcheck="false">
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="grade">Grade</label>
+            <select id="grade" name="grade">
+              <option value="8">Grade 8</option>
+              <option value="9">Grade 9</option>
+              <option value="10" selected>Grade 10</option>
+              <option value="11">Grade 11</option>
+              <option value="12">Grade 12</option>
+              <option value="mixed">Mixed 8-12</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="rounds">Questions</label>
+            <select id="rounds" name="rounds">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="timeLimit">Seconds each</label>
+            <select id="timeLimit" name="timeLimit">
+              <option value="10">10</option>
+              <option value="15">15</option>
+              <option value="20" selected>20</option>
+              <option value="30">30</option>
+              <option value="45">45</option>
+            </select>
+          </div>
+        </div>
+
+        <h2 class="section-title">Play online</h2>
+        <div class="row">
+          <button type="button" id="btn-host" class="btn primary">Host a room</button>
+          <div class="join">
+            <input id="join-code" type="text" inputmode="latin" maxlength="8" placeholder="ROOM CODE" aria-label="Room code" spellcheck="false" autocapitalize="characters">
+            <button type="button" id="btn-join" class="btn">Join</button>
+          </div>
+        </div>
+
+        <h2 class="section-title">Play on this device</h2>
+        <div class="row">
+          <div class="field">
+            <label for="cpu">CPU difficulty</label>
+            <select id="cpu" name="cpu">
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+          <button type="button" id="btn-cpu" class="btn">Play vs CPU</button>
+          <button type="button" id="btn-local" class="btn">Pass &amp; play (2 players)</button>
+        </div>
+        <p id="home-error" class="error" role="alert" hidden></p>
+      </form>
+
+      <details class="card how">
+        <summary>How it works</summary>
+        <ul>
+          <li>Both players get the same question at the same time. First correct answer scores. A wrong answer locks you out of that question.</li>
+          <li>Type numbers as integers, decimals or fractions (<code>3/4</code>). Multiple-choice questions accept keys <kbd>1</kbd>-<kbd>4</kbd>.</li>
+          <li>Ties go to sudden death. Online play is peer-to-peer over WebRTC; nothing is stored on any server.</li>
+        </ul>
+      </details>
+      <footer class="foot"><a id="repo-link" href="#" rel="noopener">Source</a> · MIT</footer>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="screen-lobby" class="screen" aria-live="polite">
+      <div class="card center">
+        <h2 id="lobby-title">Room ready</h2>
+        <p id="lobby-hint">Share this code with your opponent.</p>
+        <div id="lobby-code" class="code" aria-label="Room code"></div>
+        <button type="button" id="btn-copy" class="btn small">Copy code</button>
+        <p id="lobby-status" class="status">Waiting for an opponent…</p>
+        <button type="button" id="btn-lobby-cancel" class="btn ghost">Cancel</button>
+      </div>
+    </section>
+
+    <!-- HANDOFF (pass & play) -->
+    <section id="screen-handoff" class="screen">
+      <div class="card center">
+        <h2 id="handoff-title">Player 1, get ready</h2>
+        <p class="status">Take the device. Press the button when you are ready.</p>
+        <button type="button" id="btn-handoff" class="btn primary big">I'm ready</button>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="screen-game" class="screen">
+      <header class="scoreboard">
+        <div class="player me">
+          <span id="score-a-name" class="pname">You</span>
+          <span id="score-a" class="pscore">0</span>
+        </div>
+        <div class="round"><span id="round-label">Q 1 / 10</span></div>
+        <div class="player them">
+          <span id="score-b" class="pscore">0</span>
+          <span id="score-b-name" class="pname">Opponent</span>
+        </div>
+      </header>
+
+      <div class="timer" aria-hidden="true"><div id="timer-bar" class="timer-bar"></div></div>
+      <p id="timer-text" class="timer-text" aria-live="off">20</p>
+
+      <div class="card question">
+        <p id="q-topic" class="topic"></p>
+        <p id="q-prompt" class="prompt" aria-live="polite"></p>
+
+        <form id="answer-form" class="answer numeric" autocomplete="off">
+          <input id="answer" type="text" inputmode="text" maxlength="32" placeholder="Your answer" aria-label="Answer" spellcheck="false">
+          <button type="submit" id="btn-submit" class="btn primary">Submit</button>
+        </form>
+        <div id="choices" class="choices" role="group" aria-label="Answer choices" hidden></div>
+
+        <p id="feedback" class="feedback" role="status" aria-live="assertive"></p>
+      </div>
+      <button type="button" id="btn-quit" class="btn ghost small">Leave match</button>
+    </section>
+
+    <!-- GAME OVER -->
+    <section id="screen-over" class="screen">
+      <div class="card center">
+        <h2 id="over-title">Game over</h2>
+        <p id="over-score" class="bigscore">0 – 0</p>
+        <p id="over-detail" class="status"></p>
+        <div class="row center">
+          <button type="button" id="btn-rematch" class="btn primary">Rematch</button>
+          <button type="button" id="btn-home" class="btn">Back to menu</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="vendor/peerjs.min.js" defer></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

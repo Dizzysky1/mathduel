@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Verify vendored PeerJS integrity
+        run: |
+          expected="$(grep -o 'sha384-[A-Za-z0-9+/=]*' vendor/INTEGRITY)"
+          actual="sha384-$(openssl dgst -sha384 -binary vendor/peerjs.min.js | openssl base64 -A)"
+          echo "expected $expected"; echo "actual   $actual"
+          test "$expected" = "$actual"
+      - name: Check for HTML injection sinks in app code
+        run: |
+          ! grep -rnE "innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function\(" src/ index.html

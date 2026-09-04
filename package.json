@@ -1,0 +1,12 @@
+{
+  "name": "mathduel",
+  "version": "1.0.0",
+  "description": "1v1 real-time math duel for grades 8-12. Static site, WebRTC peer-to-peer.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "serve": "node scripts/serve.js"
+  },
+  "license": "MIT"
+}
