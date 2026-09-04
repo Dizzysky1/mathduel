@@ -57,6 +57,18 @@ function assertValidQuestion(q, requestedGrade) {
     }
     assert.ok(Number.isInteger(q.answer) && q.answer >= 0 && q.answer < 4);
   }
+
+  // Every question must teach how to solve it via a genuine worked explanation.
+  assert.equal(typeof q.explanation, 'string', `missing explanation for topic ${q.topic}`);
+  assert.ok(q.explanation.length > 0 && q.explanation.length <= 400, `explanation length: ${q.explanation.length} for topic ${q.topic}`);
+  assert.ok(!q.explanation.includes('<') && !q.explanation.includes('>'), `explanation has angle bracket: ${q.explanation}`);
+  const explanationLines = q.explanation.split('\n');
+  assert.ok(explanationLines.length <= 6, `explanation has too many lines (${explanationLines.length}) for topic ${q.topic}: ${q.explanation}`);
+  const expectedFinalAnswer = q.kind === 'numeric' ? formatAnswer(q) : q.choices[q.answer];
+  assert.ok(
+    q.explanation.includes(expectedFinalAnswer),
+    `explanation for topic ${q.topic} does not contain the final answer "${expectedFinalAnswer}": ${q.explanation}`,
+  );
 }
 
 describe('schema', () => {
@@ -326,7 +338,11 @@ describe('regression fixtures (hand-verified)', () => {
         const n = Number([...m[2]].map((c) => SUP_REV[c]).join(''));
         const newExp = n - 1;
         const expSuffix = newExp === 1 ? '' : [...String(newExp)].map((d) => SUP_FWD[Number(d)]).join('');
-        const correctText = `${a * n}x${expSuffix}`;
+        const coeff = a * n;
+        // Coefficients render with a Unicode minus (and a bare "1"/"−1" is
+        // hidden), matching leadX()'s formatting used by the generator.
+        const coeffStr = coeff === 1 ? '' : coeff === -1 ? '−' : String(coeff).replace('-', '−');
+        const correctText = `${coeffStr}x${expSuffix}`;
         assert.equal(q.choices[q.answer], correctText);
       }
     }

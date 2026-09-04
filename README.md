@@ -2,6 +2,8 @@
 
 Real-time 1v1 math race for grades 8-12. Both players get the same question at the same moment; the first correct answer takes the point, a wrong answer locks you out of that question, and ties go to sudden death.
 
+It also teaches: as soon as a question is resolved, a worked step-by-step solution appears under it, and the end-of-match screen lets you review every question with its solution.
+
 **Play:** https://dizzysky1.github.io/mathduel/
 
 ## Modes
@@ -22,7 +24,7 @@ Procedurally generated per match from a shared seed, so the two peers never have
 | 11 | exact trig values, radians, logs, exponential equations, series, remainder theorem, complex numbers, nPr/nCr |
 | 12 | power/product/chain rule, limits, definite & indefinite integrals, vectors, determinants, series |
 
-Numeric answers accept integers, decimals, or fractions (`3/4`). Multiple-choice questions answer with keys 1-4.
+Numeric answers accept integers, decimals, or fractions (`3/4`). Multiple-choice questions answer with keys 1-4. Every question carries an `explanation` (2-5 plain-text steps ending in the answer) generated from the same parameters as the prompt.
 
 ## Run locally
 

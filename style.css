@@ -160,3 +160,25 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
   .screen.active, .pscore.bump { animation: none; }
   .timer-bar { transition: none; }
 }
+
+/* Worked solution */
+.howto {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--accent2);
+  background: color-mix(in srgb, var(--bg2), var(--accent2) 8%);
+  border-radius: 0 10px 10px 0;
+  animation: fade .3s ease;
+}
+.howto[hidden] { display: none; }
+.howto-title { margin: 0 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent2); }
+.howto-steps { margin: 0; white-space: pre-line; line-height: 1.55; font-size: 1.02rem; }
+
+/* End-of-match review */
+.review summary { cursor: pointer; font-weight: 600; }
+.review-list { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 14px; }
+.review-item .rq { font-weight: 700; margin: 0 0 4px; overflow-wrap: anywhere; }
+.review-item .rmeta { margin: 0 0 6px; font-size: .9rem; color: var(--muted); }
+.review-item .rmeta .win { color: var(--good); font-weight: 600; }
+.review-item .rmeta .lose { color: var(--bad); font-weight: 600; }
+.review-item .rsteps { margin: 0; white-space: pre-line; line-height: 1.5; padding: 8px 12px; background: var(--bg2); border-radius: 8px; }

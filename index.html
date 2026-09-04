@@ -93,6 +93,7 @@
         <ul>
           <li>Both players get the same question at the same time. First correct answer scores. A wrong answer locks you out of that question.</li>
           <li>Type numbers as integers, decimals or fractions (<code>3/4</code>). Multiple-choice questions accept keys <kbd>1</kbd>-<kbd>4</kbd>.</li>
+          <li>After every question you get a worked, step-by-step solution, and the end screen lets you review all of them.</li>
           <li>Ties go to sudden death. Online play is peer-to-peer over WebRTC; nothing is stored on any server.</li>
         </ul>
       </details>
@@ -148,6 +149,10 @@
         <div id="choices" class="choices" role="group" aria-label="Answer choices" hidden></div>
 
         <p id="feedback" class="feedback" role="status" aria-live="assertive"></p>
+        <section id="howto" class="howto" aria-live="polite" hidden>
+          <h3 class="howto-title">How to solve it</h3>
+          <p id="howto-steps" class="howto-steps"></p>
+        </section>
       </div>
       <button type="button" id="btn-quit" class="btn ghost small">Leave match</button>
     </section>
@@ -163,6 +168,10 @@
           <button type="button" id="btn-home" class="btn">Back to menu</button>
         </div>
       </div>
+      <details id="review" class="card review" open>
+        <summary>Review every question and how to solve it</summary>
+        <ol id="review-list" class="review-list"></ol>
+      </details>
     </section>
   </main>
 

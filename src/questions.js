@@ -56,6 +56,52 @@ function midX(n, powerSup = '') {
   return `${term(n)}x${powerSup}`;
 }
 
+// Magnitude of a coefficient with the "1" hidden, e.g. coefMag(1) -> "", coefMag(-1) -> "",
+// coefMag(5) -> "5". Used where the sign is rendered separately from the magnitude.
+function coefMag(n) {
+  return Math.abs(n) === 1 ? '' : `${Math.abs(n)}`;
+}
+
+// A signed coefficient multiplying something OTHER than a bare "x" (e.g. a
+// parenthesized expression), so — unlike leadX() — it never appends "x".
+// bareCoef(1) -> "", bareCoef(-1) -> "−", bareCoef(6) -> "6".
+function bareCoef(n) {
+  if (n === 1) return '';
+  if (n === -1) return '−';
+  return sn(n);
+}
+
+// Wraps a negative number in parens so it reads unambiguously when placed
+// right after a "−", "+", or "/" operator, e.g. parenIfNeg(-5) -> "(−5)"
+// (avoids a bare "6 − −5" or "9/−1").
+function parenIfNeg(n) {
+  return n < 0 ? `(${sn(n)})` : sn(n);
+}
+
+// English ordinal suffix for a small positive integer, e.g. ordinal(2) -> "2nd".
+function ordinal(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  const rem10 = n % 10;
+  if (rem10 === 1) return `${n}st`;
+  if (rem10 === 2) return `${n}nd`;
+  if (rem10 === 3) return `${n}rd`;
+  return `${n}th`;
+}
+
+// Joins a list of numbers into a signed sum expression, e.g. [6, -4, 7] -> "6 − 4 + 7"
+// (never a bare "+ -4"; every negative term is shown as a proper subtraction).
+function signedSum(arr) {
+  return arr.map((v, i) => (i === 0 ? sn(v) : term(v))).join(' ');
+}
+
+// Renders "= rawText = finalText", but collapses to a single "= finalText"
+// when the unreduced form already equals the final form (avoids a redundant
+// "= 3/8 = 3/8" repeated-value step).
+function reduceStep(rawText, finalText) {
+  return rawText === finalText ? `= ${finalText}` : `= ${rawText} = ${finalText}`;
+}
+
 const SUP_MAP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '-': '⁻' };
 function sup(n) {
   return String(n).split('').map((c) => SUP_MAP[c] ?? c).join('');
@@ -188,27 +234,45 @@ function choiceQ(fields) {
   return { kind: 'choice', ...fields };
 }
 
+// Formats a raw numeric value the same way formatAnswer() will present the
+// final answer (fraction/decimal/integer), so explanations always end with
+// text that exactly matches what the player sees as the answer.
+function fmtAns(x) {
+  return formatAnswer({ kind: 'numeric', answer: x });
+}
+
 // ===========================================================================
 // GRADE 8
 // ===========================================================================
 
 function g8_intArith(R) {
-  const a = R.nonZeroInt(-9, 9);
-  const b = R.int(-9, 9);
-  const c = R.int(-9, 9);
-  const d = R.int(-9, 9);
-  const answer = a * (b - c) + d;
+  const build = () => {
+    const a = R.nonZeroInt(-9, 9);
+    const b = R.nonZeroInt(-9, 9);
+    const c = R.nonZeroInt(-9, 9);
+    const d = R.nonZeroInt(-9, 9);
+    if (b === c) return null; // avoid a trivial "× 0" collapse
+    return { a, b, c, d };
+  };
+  const { a, b, c, d } = retry(build, () => ({ a: 2, b: 3, c: -1, d: 4 }));
+  const inner = b - c;
+  const product = a * inner;
+  const answer = product + d;
   const prompt = `Evaluate: ${sn(a)} × (${sn(b)} ${term(-c)}) ${term(d)}`;
-  return numQ({ prompt, answer });
+  const explanation = `Simplify inside parentheses: ${sn(b)} ${term(-c)} = ${sn(inner)}\nMultiply: ${sn(a)} × ${sn(inner)} = ${sn(product)}\nAdd: ${sn(product)} ${term(d)} = ${fmtAns(answer)}`;
+  return numQ({ prompt, answer, explanation });
 }
 
 function g8_linearEq(R) {
   const x = R.nonZeroInt(-12, 12);
   const a = R.nonZeroInt(-9, 9);
-  const b = R.int(-20, 20);
+  const b = R.nonZeroInt(-20, 20);
   const c = a * x + b;
   const prompt = `Solve for x: ${leadX(a)} ${term(b)} = ${sn(c)}`;
-  return numQ({ prompt, answer: x });
+  const step2 = c - b;
+  const undo = b >= 0 ? `Subtract ${b}` : `Add ${Math.abs(b)}`;
+  const explanation = `${undo} from both sides: ${leadX(a)} = ${sn(step2)}\nDivide both sides by ${sn(a)}: x = ${fmtAns(x)}`;
+  return numQ({ prompt, answer: x, explanation });
 }
 
 function g8_percent(R) {
@@ -216,14 +280,18 @@ function g8_percent(R) {
     const p = R.pick([5, 10, 15, 20, 25, 40, 50, 60, 75, 80]);
     const n = R.int(1, 25) * 20;
     const answer = (p * n) / 100;
-    return numQ({ prompt: `What is ${p}% of ${n}?`, answer });
+    const explanation = `${p}% means ${p}/100: ${p}/100 × ${n} = ${fmtAns(answer)}`;
+    return numQ({ prompt: `What is ${p}% of ${n}?`, answer, explanation });
   }
   const p = R.pick([5, 10, 15, 20, 25, 50]);
   const n = R.int(1, 25) * 20;
   const up = R.chance(0.5);
-  const answer = up ? n * (1 + p / 100) : n * (1 - p / 100);
+  const changeAmt = (n * p) / 100;
+  const answer = up ? n + changeAmt : n - changeAmt;
   const verb = up ? 'increases' : 'decreases';
-  return numQ({ prompt: `A price of $${n} ${verb} by ${p}%. What is the new price?`, answer });
+  const opWord = up ? 'Add' : 'Subtract';
+  const explanation = `Find ${p}% of ${n}: ${n} × ${p}/100 = ${fmtAns(changeAmt)}\n${opWord} that ${up ? 'to' : 'from'} ${n}: ${fmtAns(answer)}`;
+  return numQ({ prompt: `A price of $${n} ${verb} by ${p}%. What is the new price?`, answer, explanation });
 }
 
 function g8_ratio(R) {
@@ -232,19 +300,23 @@ function g8_ratio(R) {
   const m = R.int(2, 9);
   const a = b * m;
   const x = d * m;
-  return numQ({ prompt: `Solve for x: ${a}/${b} = x/${d}`, answer: x });
+  const explanation = `Cross-multiply: ${a} × ${d} = ${b} × x\n${a * d} = ${b}x\nDivide both sides by ${b}: x = ${fmtAns(x)}`;
+  return numQ({ prompt: `Solve for x: ${a}/${b} = x/${d}`, answer: x, explanation });
 }
 
 function g8_exponent(R) {
   const base = R.pick([-6, -5, -4, -3, -2, 2, 3, 4, 5, 6]);
   const exp = R.int(2, 4);
   const answer = ipow(base, exp);
-  return numQ({ prompt: `Evaluate: (${sn(base)})${sup(exp)}`, answer });
+  const chain = Array(exp).fill(sn(base)).join(' × ');
+  const explanation = `(${sn(base)})${sup(exp)} means multiply ${sn(base)} by itself ${exp} times: ${chain} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Evaluate: (${sn(base)})${sup(exp)}`, answer, explanation });
 }
 
 function g8_sqrt(R) {
   const r = R.int(2, 20);
-  return numQ({ prompt: `√${r * r} = ?`, answer: r });
+  const explanation = `√${r * r} asks what number times itself equals ${r * r}: ${r} × ${r} = ${r * r}\nSo √${r * r} = ${r}`;
+  return numQ({ prompt: `√${r * r} = ?`, answer: r, explanation });
 }
 
 function g8_pythagorean(R) {
@@ -254,11 +326,14 @@ function g8_pythagorean(R) {
   const b = b0 * scale;
   const c = c0 * scale;
   if (R.chance(0.5)) {
-    return numQ({ prompt: `A right triangle has legs ${a} and ${b}. Find the hypotenuse.`, answer: c });
+    const explanation = `Pythagorean theorem: a² + b² = c²\n${a}² + ${b}² = ${a * a} + ${b * b} = ${a * a + b * b}\nc = √${a * a + b * b} = ${c}`;
+    return numQ({ prompt: `A right triangle has legs ${a} and ${b}. Find the hypotenuse.`, answer: c, explanation });
   }
   const askLeg = R.chance(0.5) ? a : b;
   const otherLeg = askLeg === a ? b : a;
-  return numQ({ prompt: `A right triangle has hypotenuse ${c} and one leg ${otherLeg}. Find the other leg.`, answer: askLeg });
+  const diff = c * c - otherLeg * otherLeg;
+  const explanation = `Pythagorean theorem: a² + b² = c²\n${c}² − ${otherLeg}² = ${c * c} − ${otherLeg * otherLeg} = ${diff}\nleg = √${diff} = ${askLeg}`;
+  return numQ({ prompt: `A right triangle has hypotenuse ${c} and one leg ${otherLeg}. Find the other leg.`, answer: askLeg, explanation });
 }
 
 function g8_slope(R) {
@@ -268,16 +343,21 @@ function g8_slope(R) {
   const dy = R.nonZeroInt(-9, 9);
   const x2 = x1 + dx;
   const y2 = y1 + dy;
-  return numQ({ prompt: `Find the slope of the line through (${x1}, ${y1}) and (${x2}, ${y2}).`, answer: dy / dx });
+  const answer = dy / dx;
+  const explanation = `Slope = (y₂ − y₁) / (x₂ − x₁) = (${sn(y2)} − ${parenIfNeg(y1)}) / (${sn(x2)} − ${parenIfNeg(x1)}) = ${sn(dy)}/${parenIfNeg(dx)} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the slope of the line through (${sn(x1)}, ${sn(y1)}) and (${sn(x2)}, ${sn(y2)}).`, answer, explanation });
 }
 
 function g8_evalExpression(R) {
   const a = R.nonZeroInt(-6, 6);
-  const b = R.int(-9, 9);
-  const c = R.int(-9, 9);
+  const b = R.nonZeroInt(-9, 9);
+  const c = R.nonZeroInt(-9, 9);
   const x0 = R.int(-5, 5);
-  const answer = a * x0 * x0 + b * x0 + c;
-  return numQ({ prompt: `Evaluate ${leadX(a, '²')} ${midX(b)} ${term(c)} at x = ${sn(x0)}`, answer });
+  const t1 = a * x0 * x0;
+  const t2 = b * x0;
+  const answer = t1 + t2 + c;
+  const explanation = `Substitute x = ${sn(x0)}: ${sn(a)}(${sn(x0)})² ${term(b)}(${sn(x0)}) ${term(c)}\n= ${sn(t1)} ${term(t2)} ${term(c)}\n= ${fmtAns(answer)}`;
+  return numQ({ prompt: `Evaluate ${leadX(a, '²')} ${midX(b)} ${term(c)} at x = ${sn(x0)}`, answer, explanation });
 }
 
 function g8_simpleInterest(R) {
@@ -285,7 +365,8 @@ function g8_simpleInterest(R) {
   const r = R.pick([2, 3, 4, 5, 6, 8, 10]);
   const t = R.int(1, 5);
   const answer = (P * r * t) / 100;
-  return numQ({ prompt: `Find the simple interest on $${P} at ${r}% annual rate for ${t} year${t === 1 ? '' : 's'}.`, answer });
+  const explanation = `Simple interest = P × r × t / 100\n= ${P} × ${r} × ${t} / 100 = ${answer}`;
+  return numQ({ prompt: `Find the simple interest on $${P} at ${r}% annual rate for ${t} year${t === 1 ? '' : 's'}.`, answer, explanation });
 }
 
 const GRADE8_TOPICS = [
@@ -310,10 +391,15 @@ function g9_linearBothSides(R) {
   let a = R.nonZeroInt(-8, 8);
   let c = R.nonZeroInt(-8, 8);
   if (a === c) c = c === 8 ? c - 1 : c + 1;
-  const b = R.int(-20, 20);
+  const b = R.nonZeroInt(-20, 20);
   const d = b + (a - c) * x;
   const prompt = `Solve for x: ${leadX(a)} ${term(b)} = ${leadX(c)} ${term(d)}`;
-  return numQ({ prompt, answer: x });
+  const diffAC = a - c;
+  const afterMoveX = `${leadX(diffAC)} ${term(b)} = ${sn(d)}`;
+  const constWord = b >= 0 ? 'Subtract' : 'Add';
+  const afterMoveConst = `${leadX(diffAC)} = ${sn(d - b)}`;
+  const explanation = `Subtract ${leadX(c)} from both sides: ${afterMoveX}\n${constWord} ${Math.abs(b)}: ${afterMoveConst}\nDivide both sides by ${sn(diffAC)}: x = ${fmtAns(x)}`;
+  return numQ({ prompt, answer: x, explanation });
 }
 
 function g9_systems(R) {
@@ -331,24 +417,39 @@ function g9_systems(R) {
   };
   const { a1, b1, e1, a2, b2, e2, x, y } = retry(build, () => ({ a1: 1, b1: 1, e1: 3, a2: 1, b2: -1, e2: 1, x: 2, y: 1 }));
   const askX = R.chance(0.5);
-  const line1 = `${leadX(a1)} ${b1 >= 0 ? '+' : '−'} ${Math.abs(b1)}y = ${sn(e1)}`;
-  const line2 = `${leadX(a2)} ${b2 >= 0 ? '+' : '−'} ${Math.abs(b2)}y = ${sn(e2)}`;
+  const line1 = `${leadX(a1)} ${b1 >= 0 ? '+' : '−'} ${coefMag(b1)}y = ${sn(e1)}`;
+  const line2 = `${leadX(a2)} ${b2 >= 0 ? '+' : '−'} ${coefMag(b2)}y = ${sn(e2)}`;
+  const det = a1 * b2 - a2 * b1;
+  const answer = askX ? x : y;
+  let explanation;
+  if (askX) {
+    const xNum = e1 * b2 - e2 * b1;
+    explanation = `Cramer's rule: D = (${sn(a1)})(${sn(b2)}) − (${sn(a2)})(${sn(b1)}) = ${sn(det)}\nx = [(${sn(e1)})(${sn(b2)}) − (${sn(e2)})(${sn(b1)})] / D = ${sn(xNum)}/${sn(det)} = ${fmtAns(x)}`;
+  } else {
+    const yNum = a1 * e2 - a2 * e1;
+    explanation = `Cramer's rule: D = (${sn(a1)})(${sn(b2)}) − (${sn(a2)})(${sn(b1)}) = ${sn(det)}\ny = [(${sn(a1)})(${sn(e2)}) − (${sn(a2)})(${sn(e1)})] / D = ${sn(yNum)}/${sn(det)} = ${fmtAns(y)}`;
+  }
   return numQ({
     prompt: `Solve the system for ${askX ? 'x' : 'y'}:\n${line1}\n${line2}`,
-    answer: askX ? x : y,
+    answer,
+    explanation,
   });
 }
 
 function g9_distributeSimplify(R) {
   const a = R.nonZeroInt(-6, 6);
   const b = R.nonZeroInt(-6, 6);
-  const c = R.int(-9, 9);
-  const d = R.int(-9, 9);
+  const c = R.nonZeroInt(-9, 9);
+  const d = R.nonZeroInt(-9, 9);
   const x0 = R.int(-5, 5);
-  const answer = a * (b * x0 + c) + d;
+  const distCoeff = a * b;
+  const distConst = a * c + d;
+  const answer = distCoeff * x0 + distConst;
+  const explanation = `Distribute ${sn(a)}: ${leadX(distCoeff)} ${term(a * c)} ${term(d)}\nCombine constants: ${leadX(distCoeff)} ${term(distConst)}\nSubstitute x = ${sn(x0)}: ${sn(distCoeff * x0)} ${term(distConst)} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Simplify ${sn(a)}(${leadX(b)} ${term(c)}) ${term(d)}, then evaluate the result at x = ${sn(x0)}.`,
     answer,
+    explanation,
   });
 }
 
@@ -361,7 +462,8 @@ function g9_exponentRules(R) {
     const correct = `${x}${sup(a + b)}`;
     const distractors = [`${x}${sup(a * b)}`, `${x}${sup(Math.abs(a - b))}`, `${x}${sup(a + b + 1)}`];
     const { choices, answer } = buildChoices(R, correct, distractors);
-    return choiceQ({ prompt: `Simplify: ${x}${sup(a)} · ${x}${sup(b)}`, choices, answer });
+    const explanation = `Product rule: xᵃ · xᵇ = xᵃ⁺ᵇ\nx${sup(a)} · x${sup(b)} = ${correct}`;
+    return choiceQ({ prompt: `Simplify: ${x}${sup(a)} · ${x}${sup(b)}`, choices, answer, explanation });
   }
   if (kind === 'power') {
     const a = R.int(2, 6);
@@ -369,14 +471,16 @@ function g9_exponentRules(R) {
     const correct = `${x}${sup(a * b)}`;
     const distractors = [`${x}${sup(a + b)}`, `${x}${sup(a ** 2 + b)}`, `${x}${sup(a * b + 1)}`];
     const { choices, answer } = buildChoices(R, correct, distractors);
-    return choiceQ({ prompt: `Simplify: (${x}${sup(a)})${sup(b)}`, choices, answer });
+    const explanation = `Power rule: (xᵃ)ᵇ = xᵃᵇ\n(x${sup(a)})${sup(b)} = ${correct}`;
+    return choiceQ({ prompt: `Simplify: (${x}${sup(a)})${sup(b)}`, choices, answer, explanation });
   }
   const a = R.int(5, 12);
-  const b = R.int(1, a - 1);
+  const b = R.int(1, a - 2);
   const correct = `${x}${powSup(a - b)}`;
   const distractors = [`${x}${sup(a + b)}`, `${x}${sup(a * b)}`, `${x}${powSup(Math.max(1, a - b - 1))}`];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Simplify: ${x}${sup(a)} / ${x}${sup(b)}`, choices, answer });
+  const explanation = `Quotient rule: xᵃ / xᵇ = xᵃ⁻ᵇ\nx${sup(a)} / x${sup(b)} = ${correct}`;
+  return choiceQ({ prompt: `Simplify: ${x}${sup(a)} / ${x}${sup(b)}`, choices, answer, explanation });
 }
 
 // (x - r): the correct factor for a root r
@@ -390,7 +494,13 @@ function factorStrPlus(r) {
 
 function g9_factoring(R) {
   const r1 = R.nonZeroInt(-9, 9);
-  let r2 = R.nonZeroInt(-9, 9);
+  const r2 = retry(
+    () => {
+      const v = R.nonZeroInt(-9, 9);
+      return v === -r1 ? null : v; // avoid roots summing to 0 (a bare "x²" term)
+    },
+    () => (r1 === 1 ? 2 : 1),
+  );
   const b = -(r1 + r2);
   const c = r1 * r2;
   const correct = `${factorStr(r1)}${factorStr(r2)}`;
@@ -400,29 +510,42 @@ function g9_factoring(R) {
     `${factorStrPlus(r1)}${factorStr(r2)}`,
   ];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Factor: x² ${midX(b)} ${term(c)}`, choices, answer });
+  const explanation = `Find two numbers that multiply to ${sn(c)} and add to ${sn(b)}: ${sn(r1)} and ${sn(r2)}\nWrite as factors: ${correct}`;
+  return choiceQ({ prompt: `Factor: x² ${midX(b)} ${term(c)}`, choices, answer, explanation });
 }
 
 function g9_absoluteValue(R) {
   const a = R.nonZeroInt(-6, 6);
-  const s1 = R.int(-10, 10);
   const d = R.nonZeroInt(1, 8);
+  const s1 = retry(
+    () => {
+      const v = R.int(-10, 10);
+      return v === -d ? null : v; // avoid a "+ 0" constant term inside the |...|
+    },
+    () => 1,
+  );
   const s2 = s1 + 2 * d;
   const b = -a * (s1 + s2) / 2;
   const c = Math.abs(a * s1 + b);
   const larger = Math.max(s1, s2);
   const smaller = Math.min(s1, s2);
   const askLarger = R.chance(0.5);
+  const answer = askLarger ? larger : smaller;
+  const xForPos = (c - b) / a;
+  const xForNeg = (-c - b) / a;
+  const explanation = `Absolute value splits into two cases:\n${leadX(a)} ${term(b)} = ${c}  or  ${leadX(a)} ${term(b)} = ${sn(-c)}\nSolve each: x = ${fmtAns(xForPos)} or x = ${fmtAns(xForNeg)}\nThe ${askLarger ? 'larger' : 'smaller'} solution is ${fmtAns(answer)}`;
   return numQ({
     prompt: `Solve for x: |${leadX(a)} ${term(b)}| = ${c}. Give the ${askLarger ? 'larger' : 'smaller'} solution.`,
-    answer: askLarger ? larger : smaller,
+    answer,
+    explanation,
   });
 }
 
 function g9_inequality(R) {
   const v = R.int(-10, 10);
-  const a = R.nonZeroInt(-9, 9);
-  const b = R.int(-15, 15);
+  let a = R.nonZeroInt(-9, 9);
+  if (a === 1) a = 2; // a = 1 would make the "divide by 1" step a no-op
+  const b = R.nonZeroInt(-15, 15);
   const c = a * v + b;
   // Fullwidth lookalikes for < and > — visually identical but not the literal
   // ASCII angle-bracket characters (kept out of prompts/choices for HTML safety).
@@ -437,7 +560,11 @@ function g9_inequality(R) {
   const correct = `x ${resultSym} ${sn(v)}`;
   const distractors = [`x ${sym} ${sn(v)}`, `x ${resultSym} ${sn(v + 1)}`, `x ${sym} ${sn(v + 1)}`];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Solve: ${leadX(a)} ${term(b)} ${sym} ${sn(c)}`, choices, answer });
+  const isolate = `${leadX(a)} ${sym} ${sn(c - b)}`;
+  const flipNote = a < 0 ? ' (flip the inequality — dividing by a negative)' : '';
+  const moveStep = b >= 0 ? `Subtract ${b} from both sides` : `Add ${Math.abs(b)} to both sides`;
+  const explanation = `${moveStep}: ${isolate}\nDivide both sides by ${sn(a)}${flipNote}: ${correct}`;
+  return choiceQ({ prompt: `Solve: ${leadX(a)} ${term(b)} ${sym} ${sn(c)}`, choices, answer, explanation });
 }
 
 function g9_arithmeticSequence(R) {
@@ -445,16 +572,20 @@ function g9_arithmeticSequence(R) {
   const d = R.nonZeroInt(-9, 9);
   const n = R.int(5, 20);
   const answer = a1 + (n - 1) * d;
-  return numQ({ prompt: `An arithmetic sequence has first term ${a1} and common difference ${d}. Find the ${n}th term.`, answer });
+  const explanation = `Formula: aₙ = a₁ + (n − 1)d\n= ${sn(a1)} ${term(d)} × (${n} − 1) = ${sn(a1)} ${term((n - 1) * d)} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `An arithmetic sequence has first term ${sn(a1)} and common difference ${sn(d)}. Find the ${ordinal(n)} term.`, answer, explanation });
 }
 
 function g9_evalQuadraticFn(R) {
   const a = R.nonZeroInt(-5, 5);
-  const b = R.int(-9, 9);
-  const c = R.int(-9, 9);
+  const b = R.nonZeroInt(-9, 9);
+  const c = R.nonZeroInt(-9, 9);
   const x0 = R.int(-5, 5);
-  const answer = a * x0 * x0 + b * x0 + c;
-  return numQ({ prompt: `Let f(x) = ${leadX(a, '²')} ${midX(b)} ${term(c)}. Find f(${sn(x0)}).`, answer });
+  const t1 = a * x0 * x0;
+  const t2 = b * x0;
+  const answer = t1 + t2 + c;
+  const explanation = `Substitute x = ${sn(x0)}: ${sn(a)}(${sn(x0)})² ${term(b)}(${sn(x0)}) ${term(c)}\n= ${sn(t1)} ${term(t2)} ${term(c)}\n= ${fmtAns(answer)}`;
+  return numQ({ prompt: `Let f(x) = ${leadX(a, '²')} ${midX(b)} ${term(c)}. Find f(${sn(x0)}).`, answer, explanation });
 }
 
 function g9_meanMedian(R) {
@@ -464,14 +595,18 @@ function g9_meanMedian(R) {
     for (let i = 0; i < n; i++) vals.push(R.int(-15, 15));
     vals.sort((a, b) => a - b);
     const median = vals[Math.floor(n / 2)];
-    return numQ({ prompt: `Find the median of: ${vals.join(', ')}`, answer: median });
+    const valsStr = vals.map(sn).join(', ');
+    const explanation = `Sort the values: ${valsStr}\nWith ${n} values, the median is the middle (3rd) one: ${fmtAns(median)}`;
+    return numQ({ prompt: `Find the median of: ${valsStr}`, answer: median, explanation });
   }
   const others = [];
   for (let i = 0; i < n - 1; i++) others.push(R.int(-15, 15));
   const targetMean = R.int(-10, 10);
   const last = targetMean * n - others.reduce((s, v) => s + v, 0);
   const vals = [...others, last];
-  return numQ({ prompt: `Find the mean of: ${vals.join(', ')}`, answer: targetMean });
+  const sum = vals.reduce((s, v) => s + v, 0);
+  const explanation = `Mean = sum of values ÷ count\nSum = ${signedSum(vals)} = ${sn(sum)}\n${sn(sum)} ÷ ${n} = ${fmtAns(targetMean)}`;
+  return numQ({ prompt: `Find the mean of: ${vals.map(sn).join(', ')}`, answer: targetMean, explanation });
 }
 
 const GRADE9_TOPICS = [
@@ -492,8 +627,13 @@ const GRADE9_TOPICS = [
 // ===========================================================================
 
 function g10_quadraticFactor(R) {
-  const r1 = R.int(-9, 9);
-  const r2 = R.int(-9, 9);
+  const build = () => {
+    const r1 = R.nonZeroInt(-9, 9);
+    const r2 = R.nonZeroInt(-9, 9);
+    if (r1 === r2 || r1 === -r2) return null; // avoid a repeated root or a bare "x²" term
+    return { r1, r2 };
+  };
+  const { r1, r2 } = retry(build, () => ({ r1: 2, r2: 3 }));
   const b = -(r1 + r2);
   const c = r1 * r2;
   const mode = R.pick(['larger', 'smaller', 'sum', 'product']);
@@ -503,7 +643,8 @@ function g10_quadraticFactor(R) {
   else if (mode === 'sum') answer = r1 + r2;
   else answer = r1 * r2;
   const askText = mode === 'sum' ? 'the sum of the roots' : mode === 'product' ? 'the product of the roots' : `the ${mode} root`;
-  return numQ({ prompt: `Solve: x² ${midX(b)} ${term(c)} = 0. Give ${askText}.`, answer });
+  const explanation = `Factor using sum ${sn(r1)} ${term(r2)} = ${sn(-b)} and product ${sn(r1)} × (${sn(r2)}) = ${sn(c)}: roots are ${sn(r1)} and ${sn(r2)}\n${askText[0].toUpperCase()}${askText.slice(1)} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Solve: x² ${midX(b)} ${term(c)} = 0. Give ${askText}.`, answer, explanation });
 }
 
 function g10_compositeShape(R) {
@@ -513,24 +654,32 @@ function g10_compositeShape(R) {
   const h = R.int(1, Math.floor(H / 2));
   if (R.chance(0.5)) {
     const answer = W * H - w * h;
+    const explanation = `Full rectangle area = ${W} × ${H} = ${W * H}\nSubtract notch area = ${w} × ${h} = ${w * h}\nRemaining area = ${W * H} − ${w * h} = ${fmtAns(answer)}`;
     return numQ({
       prompt: `A ${W}×${H} rectangle has a ${w}×${h} rectangular notch cut from one corner. Find the remaining area.`,
       answer,
+      explanation,
     });
   }
   const answer = 2 * (W + H);
+  const explanation = `Cutting a rectangular notch from a corner doesn't change the total perimeter\nPerimeter = 2 × (${W} + ${H}) = ${fmtAns(answer)}`;
   return numQ({
     prompt: `A ${W}×${H} rectangle has a ${w}×${h} rectangular notch cut from one corner, forming an L-shape. Find the perimeter of the L-shape.`,
     answer,
+    explanation,
   });
 }
 
 function g10_circle(R) {
   const r = R.int(1, 15);
   if (R.chance(0.5)) {
-    return numQ({ prompt: `A circle has radius ${r}. Its area is kπ. Find k.`, answer: r * r });
+    const answer = r * r;
+    const explanation = `Area = πr² = π(${r})² = ${answer}π\nSo k = ${fmtAns(answer)}`;
+    return numQ({ prompt: `A circle has radius ${r}. Its area is kπ. Find k.`, answer, explanation });
   }
-  return numQ({ prompt: `A circle has radius ${r}. Its circumference is kπ. Find k.`, answer: 2 * r });
+  const answer = 2 * r;
+  const explanation = `Circumference = 2πr = 2π(${r}) = ${answer}π\nSo k = ${fmtAns(answer)}`;
+  return numQ({ prompt: `A circle has radius ${r}. Its circumference is kπ. Find k.`, answer, explanation });
 }
 
 function g10_volume(R) {
@@ -538,13 +687,19 @@ function g10_volume(R) {
   const r = R.int(1, 6);
   if (shape === 'cylinder') {
     const h = R.int(1, 10);
-    return numQ({ prompt: `A cylinder has radius ${r} and height ${h}. Its volume is kπ. Find k.`, answer: r * r * h });
+    const answer = r * r * h;
+    const explanation = `Volume = πr²h = π(${r})²(${h}) = ${answer}π\nSo k = ${fmtAns(answer)}`;
+    return numQ({ prompt: `A cylinder has radius ${r} and height ${h}. Its volume is kπ. Find k.`, answer, explanation });
   }
   if (shape === 'cone') {
     const h = R.int(1, 10);
-    return numQ({ prompt: `A cone has radius ${r} and height ${h}. Its volume is kπ. Find k.`, answer: (r * r * h) / 3 });
+    const answer = (r * r * h) / 3;
+    const explanation = `Volume = (1/3)πr²h = (1/3)π(${r})²(${h}) = ${r * r * h}/3 π\nSo k = ${fmtAns(answer)}`;
+    return numQ({ prompt: `A cone has radius ${r} and height ${h}. Its volume is kπ. Find k.`, answer, explanation });
   }
-  return numQ({ prompt: `A sphere has radius ${r}. Its volume is kπ. Find k.`, answer: (4 * r * r * r) / 3 });
+  const answer = (4 * r * r * r) / 3;
+  const explanation = `Volume = (4/3)πr³ = (4/3)π(${r})³ = ${4 * r * r * r}/3 π\nSo k = ${fmtAns(answer)}`;
+  return numQ({ prompt: `A sphere has radius ${r}. Its volume is kπ. Find k.`, answer, explanation });
 }
 
 function g10_distance(R) {
@@ -556,22 +711,34 @@ function g10_distance(R) {
   const y1 = R.int(-10, 10);
   const x2 = x1 + dx;
   const y2 = y1 + dy;
-  return numQ({ prompt: `Find the distance between (${x1}, ${y1}) and (${x2}, ${y2}).`, answer: c0 * scale });
+  const answer = c0 * scale;
+  const explanation = `Distance = √((x₂−x₁)² + (y₂−y₁)²) = √((${sn(dx)})² + (${sn(dy)})²)\n= √(${dx * dx} + ${dy * dy}) = √${dx * dx + dy * dy} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the distance between (${sn(x1)}, ${sn(y1)}) and (${sn(x2)}, ${sn(y2)}).`, answer, explanation });
 }
 
 function g10_midpoint(R) {
   const mx = R.int(-10, 10);
   const my = R.int(-10, 10);
-  const dx = R.int(-10, 10);
-  const dy = R.int(-10, 10);
+  const build = () => {
+    const cdx = R.int(-10, 10);
+    const cdy = R.int(-10, 10);
+    if (cdx === 0 && cdy === 0) return null; // avoid two identical points
+    return { cdx, cdy };
+  };
+  const { cdx: dx, cdy: dy } = retry(build, () => ({ cdx: 3, cdy: 4 }));
   const x1 = mx - dx;
   const x2 = mx + dx;
   const y1 = my - dy;
   const y2 = my + dy;
   const askX = R.chance(0.5);
+  const answer = askX ? mx : my;
+  const v1 = askX ? x1 : y1;
+  const v2 = askX ? x2 : y2;
+  const explanation = `Midpoint = ((x₁+x₂)/2, (y₁+y₂)/2)\n${askX ? 'x' : 'y'}-coordinate = (${sn(v1)} ${term(v2)}) / 2 = ${fmtAns(answer)}`;
   return numQ({
-    prompt: `Find the ${askX ? 'x' : 'y'}-coordinate of the midpoint of (${x1}, ${y1}) and (${x2}, ${y2}).`,
-    answer: askX ? mx : my,
+    prompt: `Find the ${askX ? 'x' : 'y'}-coordinate of the midpoint of (${sn(x1)}, ${sn(y1)}) and (${sn(x2)}, ${sn(y2)}).`,
+    answer,
+    explanation,
   });
 }
 
@@ -582,9 +749,11 @@ function g10_similarTriangles(R) {
   const DE = a0 * k;
   const BC = b0;
   const answer = BC * k;
+  const explanation = `Similar triangles have proportional sides: AB/DE = BC/EF\nScale factor = DE/AB = ${DE}/${AB} = ${k}\nEF = BC × ${k} = ${BC} × ${k} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Triangle ABC ~ Triangle DEF. AB = ${AB}, DE = ${DE}, BC = ${BC}. Find EF.`,
     answer,
+    explanation,
   });
 }
 
@@ -595,18 +764,20 @@ function g10_radicals(R) {
   const correct = `${m}√${s}`;
   const distractors = [`√${n}`, `${m}√${s * 2}`, `${m + 1}√${s}`];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Simplify: √${n}`, choices, answer });
+  const explanation = `Pull out perfect square factors: √${n} = √(${m * m} × ${s}) = ${correct}`;
+  return choiceQ({ prompt: `Simplify: √${n}`, choices, answer, explanation });
 }
 
 function g10_vertex(R) {
-  const h = R.int(-8, 8);
-  const k = R.int(-10, 10);
+  const h = R.nonZeroInt(-8, 8);
+  const k = R.nonZeroInt(-10, 10);
   const b = -2 * h;
   const c = k + h * h;
   const correct = `(${sn(h)}, ${sn(k)})`;
   const distractors = [`(${sn(-h)}, ${sn(k)})`, `(${sn(h)}, ${sn(-k)})`, `(${sn(h)}, ${sn(c)})`];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Find the vertex of y = x² ${midX(b)} ${term(c)}`, choices, answer });
+  const explanation = `Vertex x-coordinate: h = −b/2 = −(${sn(b)})/2 = ${sn(h)}\nVertex y-coordinate: k = f(h) = ${sn(h)}² ${term(b)}(${sn(h)}) ${term(c)} = ${sn(k)}\nVertex = ${correct}`;
+  return choiceQ({ prompt: `Find the vertex of y = x² ${midX(b)} ${term(c)}`, choices, answer, explanation });
 }
 
 const REGULAR_NGONS = [3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 36];
@@ -614,11 +785,14 @@ const REGULAR_NGONS = [3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 36];
 function g10_polygonAngles(R) {
   if (R.chance(0.5)) {
     const n = R.int(3, 20);
-    return numQ({ prompt: `Find the sum of the interior angles of a convex ${n}-gon (in degrees).`, answer: (n - 2) * 180 });
+    const answer = (n - 2) * 180;
+    const explanation = `Sum of interior angles = (n − 2) × 180\n= (${n} − 2) × 180 = ${fmtAns(answer)}`;
+    return numQ({ prompt: `Find the sum of the interior angles of a convex ${n}-gon (in degrees).`, answer, explanation });
   }
   const n = R.pick(REGULAR_NGONS);
   const answer = ((n - 2) * 180) / n;
-  return numQ({ prompt: `Find the measure of each interior angle of a regular ${n}-gon (in degrees).`, answer });
+  const explanation = `Each interior angle of a regular n-gon = (n − 2) × 180 / n\n= (${n} − 2) × 180 / ${n} = ${(n - 2) * 180}/${n} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the measure of each interior angle of a regular ${n}-gon (in degrees).`, answer, explanation });
 }
 
 function g10_probability(R) {
@@ -632,12 +806,17 @@ function g10_probability(R) {
       ['rolling a number less than 3', 2, 6],
     ];
     const [desc, fav, total] = R.pick(events);
-    return numQ({ prompt: `A fair 6-sided die is rolled. Find the probability of ${desc}.`, answer: fav / total });
+    const answer = fav / total;
+    const explanation = `P(event) = favorable outcomes / total outcomes\n${reduceStep(`${fav}/${total}`, fmtAns(answer))}`;
+    return numQ({ prompt: `A fair 6-sided die is rolled. Find the probability of ${desc}.`, answer, explanation });
   }
   if (kind === 'spinner') {
     const n = R.int(4, 12);
     const fav = R.int(1, n - 1);
-    return numQ({ prompt: `A spinner has ${n} equal sections numbered 1 to ${n}. Find the probability of landing on a number from 1 to ${fav}.`, answer: fav / n });
+    const answer = fav / n;
+    const target = fav === 1 ? `landing on 1` : `landing on a number from 1 to ${fav}`;
+    const explanation = `P(event) = favorable outcomes / total outcomes\n${reduceStep(`${fav}/${n}`, fmtAns(answer))}`;
+    return numQ({ prompt: `A spinner has ${n} equal sections numbered 1 to ${n}. Find the probability of ${target}.`, answer, explanation });
   }
   const safe = [
     [4, 3],
@@ -647,7 +826,9 @@ function g10_probability(R) {
     [10, 3],
   ];
   const [sum, count] = R.pick(safe);
-  return numQ({ prompt: `Two fair 6-sided dice are rolled. Find the probability that the sum is ${sum}.`, answer: count / 36 });
+  const answer = count / 36;
+  const explanation = `There are 36 equally likely (die1, die2) outcomes\n${count} of them sum to ${sum}, so P = ${reduceStep(`${count}/36`, fmtAns(answer))}`;
+  return numQ({ prompt: `Two fair 6-sided dice are rolled. Find the probability that the sum is ${sum}.`, answer, explanation });
 }
 
 const GRADE10_TOPICS = [
@@ -683,7 +864,8 @@ function g11_trigSpecial(R) {
   const [fn, angle, value] = R.pick(TRIG_TABLE);
   const distractors = R.shuffle(TRIG_VALUE_POOL.filter((v) => v !== value)).slice(0, 3);
   const { choices, answer } = buildChoices(R, value, distractors);
-  return choiceQ({ prompt: `Find the exact value: ${fn} ${angle}°`, choices, answer });
+  const explanation = `Use the unit-circle special-angle values\n${fn} ${angle}° = ${value}`;
+  return choiceQ({ prompt: `Find the exact value: ${fn} ${angle}°`, choices, answer, explanation });
 }
 
 function g11_degRad(R) {
@@ -693,37 +875,44 @@ function g11_degRad(R) {
   const wrongDegs = degList.filter((d) => radianLabel(d) !== correct);
   const distractors = R.shuffle(wrongDegs.map(radianLabel).filter((v, i, a) => a.indexOf(v) === i)).slice(0, 3);
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Convert ${deg}° to radians.`, choices, answer });
+  const explanation = `Radians = degrees × π/180\n${deg} × π/180 = ${correct}`;
+  return choiceQ({ prompt: `Convert ${deg}° to radians.`, choices, answer, explanation });
 }
 
 function g11_logarithms(R) {
   const kind = R.pick(['base2', 'base3', 'base10', 'ln']);
   if (kind === 'base2') {
-    const e = R.int(1, 8);
-    return numQ({ prompt: `log${sub(2)}(${2 ** e}) = ?`, answer: e });
+    const e = R.int(2, 8);
+    const explanation = `log_b(x) = y means bʸ = x\nlog${sub(2)}(${2 ** e}) asks: 2 to what power gives ${2 ** e}?\n2${sup(e)} = ${2 ** e}, so the answer is ${e}`;
+    return numQ({ prompt: `log${sub(2)}(${2 ** e}) = ?`, answer: e, explanation });
   }
   if (kind === 'base3') {
-    const e = R.int(1, 5);
-    return numQ({ prompt: `log${sub(3)}(${3 ** e}) = ?`, answer: e });
+    const e = R.int(2, 5);
+    const explanation = `log_b(x) = y means bʸ = x\nlog${sub(3)}(${3 ** e}) asks: 3 to what power gives ${3 ** e}?\n3${sup(e)} = ${3 ** e}, so the answer is ${e}`;
+    return numQ({ prompt: `log${sub(3)}(${3 ** e}) = ?`, answer: e, explanation });
   }
   if (kind === 'base10') {
-    const e = R.int(1, 5);
-    return numQ({ prompt: `log(${10 ** e}) = ?`, answer: e });
+    const e = R.int(2, 5);
+    const explanation = `log_b(x) = y means bʸ = x\nlog(${10 ** e}) asks: 10 to what power gives ${10 ** e}?\n10${sup(e)} = ${10 ** e}, so the answer is ${e}`;
+    return numQ({ prompt: `log(${10 ** e}) = ?`, answer: e, explanation });
   }
-  const e = R.int(1, 5);
-  return numQ({ prompt: `ln(e${powSup(e)}) = ?`, answer: e });
+  const e = R.int(2, 5);
+  const explanation = `ln and e are inverse operations, so ln(eⁿ) = n\nln(e${powSup(e)}) = ${e}`;
+  return numQ({ prompt: `ln(e${powSup(e)}) = ?`, answer: e, explanation });
 }
 
 function g11_exponential(R) {
   const b = R.pick([2, 3, 4, 5]);
-  const k = R.int(1, 6);
+  const k = R.int(2, 6);
   const N = b ** k;
   if (R.chance(0.5)) {
-    return numQ({ prompt: `Solve for x: ${b}^x = ${N}`, answer: k });
+    const explanation = `Find x so that ${b}^x = ${N}\nSince ${b}${sup(k)} = ${N}, x = ${k}`;
+    return numQ({ prompt: `Solve for x: ${b}^x = ${N}`, answer: k, explanation });
   }
   const c = R.nonZeroInt(-4, 4);
   const answer = k - c;
-  return numQ({ prompt: `Solve for x: ${b}^(x ${term(c)}) = ${N}`, answer });
+  const explanation = `Since ${b}${sup(k)} = ${N}, we need x ${term(c)} = ${k}\n${c >= 0 ? `Subtract ${c} from both sides` : `Add ${Math.abs(c)} to both sides`}: x = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Solve for x: ${b}^(x ${term(c)}) = ${N}`, answer, explanation });
 }
 
 function g11_geometricSeq(R) {
@@ -732,22 +921,29 @@ function g11_geometricSeq(R) {
   const n = R.int(2, 5);
   if (R.chance(0.5)) {
     const answer = a1 * r ** (n - 1);
-    return numQ({ prompt: `A geometric sequence has first term ${a1} and common ratio ${r}. Find the ${n}th term.`, answer });
+    const explanation = `Formula: aₙ = a₁ × r⁽ⁿ⁻¹⁾\n= ${sn(a1)} × (${sn(r)})${sup(n - 1)} = ${sn(a1)} × (${sn(r ** (n - 1))}) = ${fmtAns(answer)}`;
+    return numQ({ prompt: `A geometric sequence has first term ${sn(a1)} and common ratio ${sn(r)}. Find the ${ordinal(n)} term.`, answer, explanation });
   }
   const answer = (a1 * (r ** n - 1)) / (r - 1);
-  return numQ({ prompt: `Find the sum of the first ${n} terms of a geometric series with first term ${a1} and common ratio ${r}.`, answer });
+  const explanation = `Formula: Sₙ = a₁(rⁿ − 1) / (r − 1)\n= ${sn(a1)}((${sn(r)})${sup(n)} − 1) / (${sn(r)} − 1) = ${sn(a1)}(${sn(r ** n)} − 1) / (${sn(r - 1)}) = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the sum of the first ${n} terms of a geometric series with first term ${sn(a1)} and common ratio ${sn(r)}.`, answer, explanation });
 }
 
 function g11_remainderTheorem(R) {
   const a = R.nonZeroInt(-4, 4);
-  const b = R.int(-6, 6);
-  const c = R.int(-6, 6);
-  const d = R.int(-6, 6);
-  const k = R.int(-4, 4);
-  const answer = a * k ** 3 + b * k ** 2 + c * k + d;
+  const b = R.nonZeroInt(-6, 6);
+  const c = R.nonZeroInt(-6, 6);
+  const d = R.nonZeroInt(-6, 6);
+  const k = R.nonZeroInt(-4, 4);
+  const t1 = a * k ** 3;
+  const t2 = b * k ** 2;
+  const t3 = c * k;
+  const answer = t1 + t2 + t3 + d;
+  const explanation = `Remainder theorem: dividing p(x) by (x − k) leaves remainder p(k)\np(${sn(k)}) = ${sn(a)}(${sn(k)})³ ${term(b)}(${sn(k)})² ${term(c)}(${sn(k)}) ${term(d)}\n= ${sn(t1)} ${term(t2)} ${term(t3)} ${term(d)} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Let p(x) = ${leadX(a, '³')} ${midX(b, '²')} ${midX(c)} ${term(d)}. Find the remainder when p(x) is divided by (x ${term(-k)}).`,
     answer,
+    explanation,
   });
 }
 
@@ -758,12 +954,14 @@ function g11_complex(R) {
     const correct = cycle[n % 4];
     const distractors = cycle.filter((v) => v !== correct);
     const { choices, answer } = buildChoices(R, correct, distractors);
-    return choiceQ({ prompt: `Simplify: i${powSup(n)}`, choices, answer });
+    const explanation = `Powers of i cycle every 4: i¹ = i, i² = −1, i³ = −i, i⁴ = 1\n${n} mod 4 = ${n % 4}, so i${powSup(n)} = ${correct}`;
+    return choiceQ({ prompt: `Simplify: i${powSup(n)}`, choices, answer, explanation });
   }
   const [p, q, r] = R.pick(TRIPLES);
   const signP = R.chance(0.5) ? p : -p;
   const signQ = R.chance(0.5) ? q : -q;
-  return numQ({ prompt: `Find |${signP} ${signQ >= 0 ? '+' : '−'} ${Math.abs(signQ)}i|`, answer: r });
+  const explanation = `|a + bi| = √(a² + b²)\n|${sn(signP)} ${signQ >= 0 ? '+' : '−'} ${Math.abs(signQ)}i| = √((${sn(signP)})² + (${sn(signQ)})²)\n= √(${signP * signP} + ${signQ * signQ}) = √${signP * signP + signQ * signQ} = ${r}`;
+  return numQ({ prompt: `Find |${sn(signP)} ${signQ >= 0 ? '+' : '−'} ${Math.abs(signQ)}i|`, answer: r, explanation });
 }
 
 function g11_permCombo(R) {
@@ -771,26 +969,39 @@ function g11_permCombo(R) {
   const n = R.int(4, 10);
   if (kind === 'perm') {
     const r = R.int(1, Math.min(n, 5));
-    return numQ({ prompt: `Evaluate P(${n}, ${r}) — the number of permutations of ${n} items taken ${r} at a time.`, answer: nPr(n, r) });
+    const answer = nPr(n, r);
+    const chain = Array.from({ length: r }, (_, i) => n - i).join(' × ');
+    const explanation = `P(n, r) = n! / (n − r)! — multiply ${r} descending factors starting at ${n}\nP(${n}, ${r}) = ${chain} = ${answer}`;
+    return numQ({ prompt: `Evaluate P(${n}, ${r}) — the number of permutations of ${n} items taken ${r} at a time.`, answer, explanation });
   }
   if (kind === 'combo') {
     const r = R.int(1, Math.min(n, 6));
-    return numQ({ prompt: `Evaluate C(${n}, ${r}) — the number of combinations of ${n} items taken ${r} at a time.`, answer: nCr(n, r) });
+    const permVal = nPr(n, r);
+    const answer = nCr(n, r);
+    const explanation = `C(n, r) = n! / (r!(n − r)!)\nC(${n}, ${r}) = ${permVal} / ${r}! = ${permVal} / ${factorial(r)} = ${answer}`;
+    return numQ({ prompt: `Evaluate C(${n}, ${r}) — the number of combinations of ${n} items taken ${r} at a time.`, answer, explanation });
   }
   const k = R.int(1, n - 1);
-  return numQ({ prompt: `Evaluate ${n}! / ${k}!`, answer: nPr(n, n - k) });
+  const answer = nPr(n, n - k);
+  const chain = Array.from({ length: n - k }, (_, i) => n - i).join(' × ');
+  const explanation = `${n}! / ${k}! cancels the shared ${k}! factors, leaving ${n - k} descending factors from ${n}\n= ${chain} = ${answer}`;
+  return numQ({ prompt: `Evaluate ${n}! / ${k}!`, answer, explanation });
 }
 
 function g11_binomial(R) {
   const n = R.int(2, 12);
-  const k = R.int(0, n);
-  return numQ({ prompt: `Find the binomial coefficient C(${n}, ${k}).`, answer: nCr(n, k) });
+  const k = R.int(1, n - 1);
+  const answer = nCr(n, k);
+  const explanation = `C(n, r) = n! / (r!(n − r)!)\nC(${n}, ${k}) = ${n}! / (${k}!(${n - k})!) = ${answer}`;
+  return numQ({ prompt: `Find the binomial coefficient C(${n}, ${k}).`, answer, explanation });
 }
 
 function g11_lawOfCosinesOrPolygon(R) {
   if (R.chance(0.4)) {
     const n = R.int(3, 20);
-    return numQ({ prompt: `Find the sum of the interior angles (in degrees) of a convex ${n}-gon.`, answer: (n - 2) * 180 });
+    const answer = (n - 2) * 180;
+    const explanation = `Sum of interior angles = (n − 2) × 180\n= (${n} − 2) × 180 = ${fmtAns(answer)}`;
+    return numQ({ prompt: `Find the sum of the interior angles (in degrees) of a convex ${n}-gon.`, answer, explanation });
   }
   const build = () => {
     const angleOptions = [60, 90, 120];
@@ -812,37 +1023,44 @@ function g11_lawOfCosinesOrPolygon(R) {
     `${Math.abs(a - b)}`,
   ];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `In triangle ABC, a = ${a}, b = ${b}, and the included angle C = ${C}°. Find side c (law of cosines).`, choices, answer });
+  const explanation = `Law of cosines: c² = a² + b² − 2ab·cos(C)\nc² = ${a}² + ${b}² − 2(${a})(${b})·cos(${C}°) = ${c * c}\nc = √${c * c} = ${correct}`;
+  return choiceQ({ prompt: `In triangle ABC, a = ${a}, b = ${b}, and the included angle C = ${C}°. Find side c (law of cosines).`, choices, answer, explanation });
 }
 
 function g11_functionComposition(R) {
   const a = R.nonZeroInt(-5, 5);
-  const b = R.int(-9, 9);
+  const b = R.nonZeroInt(-9, 9);
   const c = R.nonZeroInt(-5, 5);
-  const d = R.int(-9, 9);
+  const d = R.nonZeroInt(-9, 9);
   const k = R.int(-5, 5);
   const gk = c * k + d;
   const answer = a * gk + b;
+  const explanation = `First find g(${sn(k)}): ${leadX(c)} ${term(d)} at x = ${sn(k)} gives ${sn(gk)}\nThen find f(${sn(gk)}): ${leadX(a)} ${term(b)} at x = ${sn(gk)} gives ${fmtAns(answer)}`;
   return numQ({
     prompt: `Let f(x) = ${leadX(a)} ${term(b)} and g(x) = ${leadX(c)} ${term(d)}. Find f(g(${sn(k)})).`,
     answer,
+    explanation,
   });
 }
 
 function g11_inverseFunction(R) {
   const a = R.nonZeroInt(-6, 6);
   if (Math.abs(a) === 1) return g11_inverseFunction2(R);
-  const b = R.int(-9, 9);
+  const b = R.nonZeroInt(-9, 9);
   const k = R.int(-8, 8);
   const v = a * k + b;
-  return numQ({ prompt: `Let f(x) = ${leadX(a)} ${term(b)}. Find f⁻¹(${sn(v)}).`, answer: k });
+  const step2 = v - b;
+  const explanation = `f⁻¹(v) undoes f: solve ${leadX(a)} ${term(b)} = ${sn(v)} for x\n${b >= 0 ? 'Subtract' : 'Add'} ${Math.abs(b)}: ${leadX(a)} = ${sn(step2)}\nDivide by ${sn(a)}: x = ${fmtAns(k)}`;
+  return numQ({ prompt: `Let f(x) = ${leadX(a)} ${term(b)}. Find f⁻¹(${sn(v)}).`, answer: k, explanation });
 }
 function g11_inverseFunction2(R) {
   const a = R.pick([2, 3, 4, 5, -2, -3, -4, -5]);
-  const b = R.int(-9, 9);
+  const b = R.nonZeroInt(-9, 9);
   const k = R.int(-8, 8);
   const v = a * k + b;
-  return numQ({ prompt: `Let f(x) = ${leadX(a)} ${term(b)}. Find f⁻¹(${sn(v)}).`, answer: k });
+  const step2 = v - b;
+  const explanation = `f⁻¹(v) undoes f: solve ${leadX(a)} ${term(b)} = ${sn(v)} for x\n${b >= 0 ? 'Subtract' : 'Add'} ${Math.abs(b)}: ${leadX(a)} = ${sn(step2)}\nDivide by ${sn(a)}: x = ${fmtAns(k)}`;
+  return numQ({ prompt: `Let f(x) = ${leadX(a)} ${term(b)}. Find f⁻¹(${sn(v)}).`, answer: k, explanation });
 }
 
 const GRADE11_TOPICS = [
@@ -867,34 +1085,51 @@ const GRADE11_TOPICS = [
 function g12_derivativePower(R) {
   const a = R.nonZeroInt(-6, 6);
   const n = R.int(2, 5);
-  const correct = `${a * n}x${powSup(n - 1)}`;
-  const distractors = [`${a}x${powSup(n - 1)}`, `${a * n}x${sup(n)}`, `${a * n}x${powSup(Math.max(0, n - 2))}`];
+  const correct = leadX(a * n, powSup(n - 1));
+  const distractors = [
+    leadX(a, powSup(n - 1)),
+    leadX(a * n, sup(n)),
+    leadX(a * n, powSup(Math.max(0, n - 2))),
+  ];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Find the derivative of f(x) = ${leadX(a)}${sup(n)}`, choices, answer });
+  const explanation = `Power rule: d/dx xⁿ = n·xⁿ⁻¹\nd/dx[${leadX(a)}${sup(n)}] = ${sn(a)}·${n}·x${powSup(n - 1)} = ${correct}`;
+  return choiceQ({ prompt: `Find the derivative of f(x) = ${leadX(a)}${sup(n)}`, choices, answer, explanation });
 }
 
 function g12_derivativeAtPoint(R) {
   const a = R.nonZeroInt(-4, 4);
-  const b = R.int(-6, 6);
-  const c = R.int(-6, 6);
-  const d = R.int(-6, 6);
+  const b = R.nonZeroInt(-6, 6);
+  const c = R.nonZeroInt(-6, 6);
+  const d = R.nonZeroInt(-6, 6);
   const x0 = R.int(-3, 3);
-  const answer = 3 * a * x0 * x0 + 2 * b * x0 + c;
+  const t1 = 3 * a * x0 * x0;
+  const t2 = 2 * b * x0;
+  const answer = t1 + t2 + c;
+  const explanation = `Power rule: f'(x) = 3ax² + 2bx + c\nf'(${sn(x0)}) = 3(${sn(a)})(${sn(x0)})² + 2(${sn(b)})(${sn(x0)}) ${term(c)}\n= ${signedSum([t1, t2, c])} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Let f(x) = ${leadX(a, '³')} ${midX(b, '²')} ${midX(c)} ${term(d)}. Find f'(${sn(x0)}).`,
     answer,
+    explanation,
   });
 }
 
 function g12_limits(R) {
-  const k = R.int(-6, 6);
   const m = R.nonZeroInt(-6, 6);
+  const k = retry(
+    () => {
+      const v = R.nonZeroInt(-6, 6);
+      return v === m ? null : v; // avoid a repeated-root "+ 0x" numerator term
+    },
+    () => (m === 1 ? 2 : 1),
+  );
   const B = m - k;
   const C = -k * m;
   const answer = k + m;
+  const explanation = `Factor the numerator: x² ${midX(B)} ${term(C)} = (x ${term(-k)})(x ${term(m)})\nCancel (x ${term(-k)}) with the denominator, leaving x ${term(m)}\nAt x = ${sn(k)}: ${sn(k)} ${term(m)} = ${fmtAns(answer)}`;
   return numQ({
-    prompt: `Evaluate: lim(x→${k}) of (x² ${midX(B)} ${term(C)}) / (x ${term(-k)})`,
+    prompt: `Evaluate: lim(x→${sn(k)}) of (x² ${midX(B)} ${term(C)}) / (x ${term(-k)})`,
     answer,
+    explanation,
   });
 }
 
@@ -906,9 +1141,13 @@ function g12_definiteIntegral(R) {
   let q = R.int(-3, 3);
   if (q === p) q = q + 1;
   const answer = A * (q ** (n + 1) - p ** (n + 1));
+  const upperVal = A * q ** (n + 1);
+  const lowerVal = A * p ** (n + 1);
+  const explanation = `Antiderivative: ∫${leadX(a)}${powSup(n)} dx = ${leadX(A, sup(n + 1))}\nEvaluate from ${sn(p)} to ${sn(q)}: (${sn(A)})(${sn(q)})${sup(n + 1)} − (${sn(A)})(${sn(p)})${sup(n + 1)}\n= ${sn(upperVal)} ${term(-lowerVal)} = ${fmtAns(answer)}`;
   return numQ({
-    prompt: `Evaluate: ∫ from ${p} to ${q} of ${leadX(a)}${powSup(n)} dx`,
+    prompt: `Evaluate: ∫ from ${sn(p)} to ${sn(q)} of ${leadX(a)}${powSup(n)} dx`,
     answer,
+    explanation,
   });
 }
 
@@ -916,24 +1155,34 @@ function g12_indefiniteIntegral(R) {
   const n = R.int(1, 4);
   const a = R.nonZeroInt(-6, 6) * (n + 1);
   const A = a / (n + 1);
-  const correct = `${A}x${sup(n + 1)} + C`;
-  const distractors = [`${a}x${sup(n + 1)} + C`, `${A}x${powSup(n)} + C`, `${A}x${sup(n + 1)}`];
+  const correct = `${leadX(A, sup(n + 1))} + C`;
+  const distractors = [
+    `${leadX(a, sup(n + 1))} + C`, // forgot to divide by (n + 1)
+    `${leadX(A, powSup(n))} + C`, // forgot to increment the exponent
+    leadX(A, sup(n + 1)), // forgot the "+ C"
+  ];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Find the indefinite integral: ∫ ${leadX(a)}${powSup(n)} dx`, choices, answer });
+  const explanation = `Power rule for integrals: ∫xⁿ dx = xⁿ⁺¹/(n+1) + C\n∫${leadX(a)}${powSup(n)} dx = (${sn(a)}/${n + 1})x${sup(n + 1)} + C = ${correct}`;
+  return choiceQ({ prompt: `Find the indefinite integral: ∫ ${leadX(a)}${powSup(n)} dx`, choices, answer, explanation });
 }
 
 function g12_chainRule(R) {
-  const a = R.nonZeroInt(-4, 4);
-  const b = R.int(-6, 6);
+  // a = 1 is excluded: multiplying by u′ = 1 would make the "forgot the chain
+  // rule multiplier" distractor collide with the correct simplified answer.
+  const a = R.pick([-4, -3, -2, -1, 2, 3, 4]);
+  const b = R.nonZeroInt(-6, 6);
   const n = R.int(2, 5);
-  const correct = `${n}(${leadX(a)} ${term(b)})${powSup(n - 1)} · ${a}`;
+  const inner = `${leadX(a)} ${term(b)}`;
+  const coeff = n * a;
+  const correct = `${bareCoef(coeff)}(${inner})${powSup(n - 1)}`;
   const distractors = [
-    `${n}(${leadX(a)} ${term(b)})${powSup(n - 1)}`,
-    `(${leadX(a)} ${term(b)})${powSup(n - 1)} · ${a}`,
-    `${n}(${leadX(a)} ${term(b)})${sup(n)} · ${a}`,
+    `${bareCoef(n)}(${inner})${powSup(n - 1)}`, // forgot to multiply by u′ = a
+    `${bareCoef(a)}(${inner})${powSup(n - 1)}`, // forgot to multiply by n
+    `${bareCoef(coeff)}(${inner})${sup(n)}`, // forgot to decrement the exponent
   ];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Find the derivative of f(x) = (${leadX(a)} ${term(b)})${sup(n)}`, choices, answer });
+  const explanation = `Chain rule: d/dx[uⁿ] = n·uⁿ⁻¹·u′, where u = ${inner} and u′ = ${sn(a)}\n${n}·(${inner})${powSup(n - 1)}·${sn(a)} = ${correct}`;
+  return choiceQ({ prompt: `Find the derivative of f(x) = (${inner})${sup(n)}`, choices, answer, explanation });
 }
 
 function g12_vectors(R) {
@@ -944,17 +1193,24 @@ function g12_vectors(R) {
     const d = R.int(-8, 8);
     const e = R.int(-8, 8);
     const f = R.int(-8, 8);
-    const answer = a * d + b * e + c * f;
-    return numQ({ prompt: `Find the dot product of ⟨${a}, ${b}, ${c}⟩ and ⟨${d}, ${e}, ${f}⟩.`, answer });
+    const t1 = a * d;
+    const t2 = b * e;
+    const t3 = c * f;
+    const answer = t1 + t2 + t3;
+    const explanation = `Dot product = sum of matching component products\n= (${sn(a)})(${sn(d)}) + (${sn(b)})(${sn(e)}) + (${sn(c)})(${sn(f)})\n= ${sn(t1)} ${term(t2)} ${term(t3)} = ${fmtAns(answer)}`;
+    return numQ({ prompt: `Find the dot product of ⟨${sn(a)}, ${sn(b)}, ${sn(c)}⟩ and ⟨${sn(d)}, ${sn(e)}, ${sn(f)}⟩.`, answer, explanation });
   }
   const [p, q, r] = R.pick(TRIPLES);
-  return numQ({ prompt: `Find the magnitude of the vector ⟨${p}, ${q}⟩.`, answer: r });
+  const explanation = `Magnitude: |⟨p, q⟩| = √(p² + q²)\n= √(${p}² + ${q}²) = √(${p * p} + ${q * q}) = √${p * p + q * q} = ${r}`;
+  return numQ({ prompt: `Find the magnitude of the vector ⟨${p}, ${q}⟩.`, answer: r, explanation });
 }
 
 function g12_probabilityCombos(R) {
   const n = R.int(4, 12);
   const k = R.int(1, n - 1);
-  return numQ({ prompt: `A bag has ${n} marbles, ${k} of which are red. One marble is drawn at random. Find the probability it is red.`, answer: k / n });
+  const answer = k / n;
+  const explanation = `P(red) = favorable outcomes / total outcomes\n${reduceStep(`${k}/${n}`, fmtAns(answer))}`;
+  return numQ({ prompt: `A bag has ${n} marbles, ${k} of which are red. One marble is drawn at random. Find the probability it is red.`, answer, explanation });
 }
 
 function g12_seriesSum(R) {
@@ -963,13 +1219,15 @@ function g12_seriesSum(R) {
     const d = R.nonZeroInt(-8, 8);
     const n = R.pick([4, 6, 8, 10]);
     const answer = (n / 2) * (2 * a1 + (n - 1) * d);
-    return numQ({ prompt: `Find the sum of the first ${n} terms of an arithmetic series with first term ${a1} and common difference ${d}.`, answer });
+    const explanation = `Formula: Sₙ = (n/2)(2a₁ + (n − 1)d)\n= (${n}/2)(2(${sn(a1)}) ${term((n - 1) * d)}) = (${n}/2)(${sn(2 * a1 + (n - 1) * d)}) = ${fmtAns(answer)}`;
+    return numQ({ prompt: `Find the sum of the first ${n} terms of an arithmetic series with first term ${sn(a1)} and common difference ${sn(d)}.`, answer, explanation });
   }
   const a1 = R.nonZeroInt(-9, 9);
   const r = R.pick([2, 3, -2, -3]);
   const n = R.int(2, 5);
   const answer = (a1 * (r ** n - 1)) / (r - 1);
-  return numQ({ prompt: `Find the sum of the first ${n} terms of a geometric series with first term ${a1} and common ratio ${r}.`, answer });
+  const explanation = `Formula: Sₙ = a₁(rⁿ − 1) / (r − 1)\n= ${sn(a1)}((${sn(r)})${sup(n)} − 1) / (${sn(r)} − 1) = ${sn(a1)}(${sn(r ** n)} − 1) / (${sn(r - 1)}) = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the sum of the first ${n} terms of a geometric series with first term ${sn(a1)} and common ratio ${sn(r)}.`, answer, explanation });
 }
 
 function g12_matrixDeterminant(R) {
@@ -978,32 +1236,39 @@ function g12_matrixDeterminant(R) {
   const c = R.int(-9, 9);
   const d = R.int(-9, 9);
   const answer = a * d - b * c;
-  return numQ({ prompt: `Find the determinant of the matrix [[${a}, ${b}], [${c}, ${d}]].`, answer });
+  const explanation = `det = ad − bc\n= (${sn(a)})(${sn(d)}) − (${sn(b)})(${sn(c)}) = ${sn(a * d)} ${term(-(b * c))} = ${fmtAns(answer)}`;
+  return numQ({ prompt: `Find the determinant of the matrix [[${sn(a)}, ${sn(b)}], [${sn(c)}, ${sn(d)}]].`, answer, explanation });
 }
 
 function g12_tangentSlope(R) {
   const a = R.nonZeroInt(-5, 5);
-  const b = R.int(-8, 8);
-  const c = R.int(-8, 8);
+  const b = R.nonZeroInt(-8, 8);
+  const c = R.nonZeroInt(-8, 8);
   const x0 = R.int(-5, 5);
   const answer = 2 * a * x0 + b;
+  const explanation = `Power rule: f'(x) = 2ax + b\nf'(${sn(x0)}) = 2(${sn(a)})(${sn(x0)}) ${term(b)} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Let f(x) = ${leadX(a, '²')} ${midX(b)} ${term(c)}. Find the slope of the tangent line to f at x = ${sn(x0)}.`,
     answer,
+    explanation,
   });
 }
 
 function g12_avgRateOfChange(R) {
   const a = R.nonZeroInt(-5, 5);
-  const b = R.int(-8, 8);
-  const c = R.int(-8, 8);
+  const b = R.nonZeroInt(-8, 8);
+  const c = R.nonZeroInt(-8, 8);
   const p = R.int(-6, 6);
   let q = R.int(-6, 6);
   if (q === p) q = q + 1;
   const answer = a * (p + q) + b;
+  const lo = Math.min(p, q);
+  const hi = Math.max(p, q);
+  const explanation = `Average rate of change = (f(q) − f(p)) / (q − p) = a(p + q) + b for a quadratic\n= ${sn(a)}(${sn(lo)} ${term(hi)}) ${term(b)} = ${fmtAns(answer)}`;
   return numQ({
-    prompt: `Let f(x) = ${leadX(a, '²')} ${midX(b)} ${term(c)}. Find the average rate of change of f on [${Math.min(p, q)}, ${Math.max(p, q)}].`,
+    prompt: `Let f(x) = ${leadX(a, '²')} ${midX(b)} ${term(c)}. Find the average rate of change of f on [${sn(lo)}, ${sn(hi)}].`,
     answer,
+    explanation,
   });
 }
 
@@ -1013,31 +1278,36 @@ function g12_logProperties(R) {
     const correct = 'log a + log b';
     const distractors = ['log a − log b', 'log a · log b', 'log a / log b'];
     const { choices, answer } = buildChoices(R, correct, distractors);
-    return choiceQ({ prompt: 'Which expression is equivalent to log(ab)?', choices, answer });
+    const explanation = `Product rule for logs: log(ab) = log a + log b`;
+    return choiceQ({ prompt: 'Which expression is equivalent to log(ab)?', choices, answer, explanation });
   }
   if (kind === 'quotient') {
     const correct = 'log a − log b';
     const distractors = ['log a + log b', 'log a · log b', 'log b − log a'];
     const { choices, answer } = buildChoices(R, correct, distractors);
-    return choiceQ({ prompt: 'Which expression is equivalent to log(a/b)?', choices, answer });
+    const explanation = `Quotient rule for logs: log(a/b) = log a − log b`;
+    return choiceQ({ prompt: 'Which expression is equivalent to log(a/b)?', choices, answer, explanation });
   }
   const n = R.int(2, 5);
   const correct = `${n} log a`;
   const distractors = [`log(${n}a)`, `(log a)${sup(n)}`, `log a${sup(n)}`];
   const { choices, answer } = buildChoices(R, correct, distractors);
-  return choiceQ({ prompt: `Which expression is equivalent to log(a${sup(n)})?`, choices, answer });
+  const explanation = `Power rule for logs: log(aⁿ) = n · log a\nSo log(a${sup(n)}) = ${correct}`;
+  return choiceQ({ prompt: `Which expression is equivalent to log(a${sup(n)})?`, choices, answer, explanation });
 }
 
 function g12_secondDerivative(R) {
   const a = R.nonZeroInt(-4, 4);
-  const b = R.int(-6, 6);
-  const c = R.int(-6, 6);
-  const d = R.int(-6, 6);
+  const b = R.nonZeroInt(-6, 6);
+  const c = R.nonZeroInt(-6, 6);
+  const d = R.nonZeroInt(-6, 6);
   const x0 = R.int(-4, 4);
   const answer = 6 * a * x0 + 2 * b;
+  const explanation = `Power rule twice: f'(x) = 3ax² + 2bx + c, f''(x) = 6ax + 2b\nf''(${sn(x0)}) = 6(${sn(a)})(${sn(x0)}) ${term(2 * b)} = ${fmtAns(answer)}`;
   return numQ({
     prompt: `Let f(x) = ${leadX(a, '³')} ${midX(b, '²')} ${midX(c)} ${term(d)}. Find f''(${sn(x0)}).`,
     answer,
+    explanation,
   });
 }
 
@@ -1134,24 +1404,30 @@ export function checkAnswer(question, rawInput) {
   }
 }
 
+// Renders a plain JS number's ASCII "-" as the Unicode minus "−" used
+// everywhere else in prompts/explanations, without touching anything else.
+function unicodeMinus(s) {
+  return s.startsWith('-') ? `−${s.slice(1)}` : s;
+}
+
 export function formatAnswer(question) {
   if (!question || typeof question !== 'object') return '';
   if (question.kind === 'choice') {
     return String(question.choices[question.answer]);
   }
   const x = question.answer;
-  if (Number.isInteger(x)) return String(x);
+  if (Number.isInteger(x)) return unicodeMinus(String(x));
   if (Math.abs(x * 100 - Math.round(x * 100)) < 1e-6) {
     const fixed = (Math.round(x * 100) / 100).toString();
-    return fixed;
+    return unicodeMinus(fixed);
   }
   for (let k = 2; k <= 12; k++) {
     const v = x * k;
     if (Math.abs(v - Math.round(v)) < 1e-6) {
       const num = Math.round(v);
       const g = gcd(num, k) || 1;
-      return `${num / g}/${k / g}`;
+      return unicodeMinus(`${num / g}/${k / g}`);
     }
   }
-  return String(x);
+  return unicodeMinus(String(x));
 }

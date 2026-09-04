@@ -9,7 +9,8 @@ import {
 } from './protocol.js';
 
 const $ = (id) => document.getElementById(id);
-const REVEAL_MS = 2600;
+// Long enough to skim the worked solution before the next question.
+const REVEAL_MS = 5000;
 const REPO_URL = 'https://github.com/Dizzysky1/mathduel';
 const gradeLabel = (g) => (g === 'mixed' ? 'Mixed grades 8-12' : `Grade ${g}`);
 
@@ -89,6 +90,7 @@ function renderQuestion(q, { index, rounds, suddenDeath }) {
   $('q-topic').textContent = `Grade ${q.grade} · ${q.topic.replace(/-/g, ' ')}`;
   $('q-prompt').textContent = q.prompt;
   setFeedback('');
+  hideHowTo();
   const form = $('answer-form');
   const choices = $('choices');
   choices.replaceChildren();
@@ -129,6 +131,77 @@ function setFeedback(text, cls = '') {
   el.className = `feedback ${cls}`.trim();
 }
 
+function explanationOf(q) {
+  return typeof q.explanation === 'string' && q.explanation.trim()
+    ? q.explanation
+    : `Answer: ${formatAnswer(q)}`;
+}
+
+function showHowTo(q) {
+  $('howto-steps').textContent = explanationOf(q);
+  $('howto').hidden = false;
+}
+
+function hideHowTo() {
+  $('howto').hidden = true;
+  $('howto-steps').textContent = '';
+}
+
+/**
+ * Fill the end-of-match review list.
+ * items: [{ q, label, outcome: 'win' | 'lose' | 'none' }]
+ */
+function renderReview(items) {
+  const list = $('review-list');
+  list.replaceChildren();
+  for (const it of items) {
+    const li = document.createElement('li');
+    li.className = 'review-item';
+    const rq = document.createElement('p');
+    rq.className = 'rq';
+    rq.textContent = it.q.prompt;
+    const meta = document.createElement('p');
+    meta.className = 'rmeta';
+    const ans = document.createElement('span');
+    ans.textContent = `Answer: ${formatAnswer(it.q)}`;
+    meta.append(ans);
+    if (it.label) {
+      const lab = document.createElement('span');
+      lab.className = it.outcome === 'win' ? 'win' : it.outcome === 'lose' ? 'lose' : '';
+      lab.textContent = ` · ${it.label}`;
+      meta.append(lab);
+    }
+    const steps = document.createElement('p');
+    steps.className = 'rsteps';
+    steps.textContent = explanationOf(it.q);
+    li.append(rq, meta, steps);
+    list.append(li);
+  }
+  $('review').hidden = items.length === 0;
+}
+
+/** Build review items from a Match's history for the player on `mySide`. */
+function reviewFromMatch(match, mySide, names) {
+  return match.history.map((h) => {
+    const q = match.questions[h.index];
+    const mine = h.answers[mySide];
+    let label; let outcome = 'none';
+    if (h.winner === mySide) { label = 'You scored'; outcome = 'win'; }
+    else if (h.winner) { label = `${names[h.winner]} scored`; outcome = 'lose'; }
+    else if (mine !== null) { label = `You answered ${describeAnswer(q, mine)}`; outcome = 'lose'; }
+    else { label = 'No answer in time'; }
+    return { q, label, outcome };
+  });
+}
+
+function describeAnswer(q, raw) {
+  if (q.kind === 'choice') {
+    const i = Number(raw);
+    return Number.isInteger(i) && q.choices[i] !== undefined ? `"${q.choices[i]}"` : String(raw);
+  }
+  return String(raw);
+}
+
 function submitLocal(value) {
   if (!inputEnabled || !submitHandler) return;
   const v = String(value ?? '').trim().slice(0, 32);
@@ -166,8 +239,9 @@ function revealText(match, mySide, names) {
 // ---------- controllers ----------
 let active = null; // current controller with quit()
 
-function endMatch({ title, scoreText, detail, rematchable }) {
+function endMatch({ title, scoreText, detail, rematchable, review = [] }) {
   stopTimer();
+  renderReview(review);
   $('over-title').textContent = title;
   $('over-score').textContent = scoreText;
   $('over-detail').textContent = detail || '';
@@ -239,6 +313,7 @@ class CpuGame {
     if (m.current.kind === 'choice') {
       markChoices(m.current, { correctIndex: m.current.answer, chosen: m.answers.a !== null ? Number(m.answers.a) : null });
     }
+    showHowTo(m.current);
     updateScores(m.scores.a, m.scores.b, m.winner);
     this.nextTimer = setTimeout(() => this.advance(), REVEAL_MS);
   }
@@ -250,6 +325,7 @@ class CpuGame {
       scoreText: `${m.scores.a} – ${m.scores.b}`,
       detail: `${this.names.a} vs ${this.names.b} · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
+      review: reviewFromMatch(m, 'a', this.names),
     });
   }
 
@@ -318,6 +394,7 @@ class LocalGame {
     if (m.current.kind === 'choice') {
       markChoices(m.current, { correctIndex: m.current.answer, chosen: value !== null ? Number(value) : null });
     }
+    showHowTo(m.current);
     updateScores(this.scores.a, this.scores.b, correct ? this.turn : null);
     this.nextTimer = setTimeout(() => {
       if (this.turn === 'a') this.turn = 'b';
@@ -333,6 +410,13 @@ class LocalGame {
       scoreText: `${a} – ${b}`,
       detail: `Pass & play · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
+      review: ['a', 'b'].flatMap((side) => this.matches[side].history.map((h) => {
+        const q = this.matches[side].questions[h.index];
+        const mine = h.answers[side];
+        const correct = h.winner === side;
+        const what = correct ? 'correct' : mine !== null ? `answered ${describeAnswer(q, mine)}` : 'no answer in time';
+        return { q, label: `${this.names[side]}: ${what}`, outcome: correct ? 'win' : 'lose' };
+      })),
     });
   }
 
@@ -575,6 +659,7 @@ class OnlineGame {
       const mine = m.answers[this.mySide];
       markChoices(m.current, { correctIndex: m.current.answer, chosen: mine !== null ? Number(mine) : null });
     }
+    showHowTo(m.current);
     updateScores(m.scores.a, m.scores.b, m.winner);
   }
 
@@ -587,6 +672,7 @@ class OnlineGame {
       scoreText: `${m.scores.a} – ${m.scores.b}`,
       detail: `${this.names.a} vs ${this.names.b} · ${gradeLabel(this.settings.grade)}`,
       rematchable: true,
+      review: reviewFromMatch(m, this.mySide, this.names),
     });
   }
 
@@ -641,6 +727,7 @@ class OnlineGame {
       scoreText: m ? `${m.scores.a} – ${m.scores.b}` : '',
       detail: reason,
       rematchable: false,
+      review: m ? reviewFromMatch(m, this.mySide, this.names) : [],
     });
   }
 
