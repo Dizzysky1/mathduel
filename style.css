@@ -127,7 +127,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 
 .question { min-height: 220px; }
 .topic { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 6px; }
-.prompt { font-size: clamp(1.4rem, 4.5vw, 2rem); font-weight: 700; margin: 0 0 18px; overflow-wrap: anywhere; }
+.prompt { font-size: clamp(1.4rem, 4.5vw, 2rem); font-weight: 700; margin: 0 0 18px; overflow-wrap: anywhere; white-space: pre-line; }
 .answer { display: flex; gap: 8px; }
 .answer input { font-size: 1.25rem; }
 .answer[hidden] { display: none; }
@@ -177,7 +177,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 /* End-of-match review */
 .review summary { cursor: pointer; font-weight: 600; }
 .review-list { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 14px; }
-.review-item .rq { font-weight: 700; margin: 0 0 4px; overflow-wrap: anywhere; }
+.review-item .rq { font-weight: 700; margin: 0 0 4px; overflow-wrap: anywhere; white-space: pre-line; }
 .review-item .rmeta { margin: 0 0 6px; font-size: .9rem; color: var(--muted); }
 .review-item .rmeta .win { color: var(--good); font-weight: 600; }
 .review-item .rmeta .lose { color: var(--bad); font-weight: 600; }
