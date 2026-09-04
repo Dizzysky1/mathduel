@@ -33,7 +33,7 @@ The opponent is untrusted. They may run a modified client and send arbitrary mes
 - **Answer lookup.** Every client can compute the answer to every question; a modified client could auto-answer. This is unavoidable without an authoritative server and is accepted for a casual game.
 - **Ordering fairness.** The host decides who answered first based on arrival time, so the host has a latency edge and a modified host could favour itself on close races. Correctness cannot be faked, only the tie-break on timing.
 - **IP exposure.** WebRTC reveals peers' IP addresses to each other, as in any P2P game.
-- **Signalling availability.** The public PeerJS server is a shared free service; STUN only, so some symmetric-NAT networks cannot connect.
+- **Signalling and relay availability.** The public PeerJS signalling server and the Open Relay TURN servers are shared free services. When a direct path fails, game traffic is relayed through TURN; it is still end-to-end DTLS-encrypted, the relay only sees ciphertext. The TURN credentials are public by design of that service and grant nothing beyond relaying.
 
 ## Reporting
 

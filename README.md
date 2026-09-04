@@ -35,6 +35,12 @@ npm test          # node:test suite
 npm run serve     # http://localhost:3019
 ```
 
+## Troubleshooting online play
+
+- **Stuck on "Connecting…"** – the two devices could not open a WebRTC path. The game tries a direct connection first, then falls back to a public TURN relay. If it still fails after ~25 s you will get an error: try again, turn off a VPN on either side, or move one player to a different network (mobile data usually works).
+- **"No room with that code answered"** – the host must still be on the "Waiting for an opponent" screen; codes die when the host leaves.
+- **Everything works on the same Wi-Fi but not across the internet** – that is the NAT case above; the TURN fallback exists for exactly this.
+
 ## Security model
 
 See [SECURITY.md](SECURITY.md). Short version: the host is authoritative for *ordering* (who answered first), but every claim it makes about *correctness* is re-verified by the guest against its own copy of the question, and the question seed is fixed by a commit-reveal exchange so neither side can pick the questions.

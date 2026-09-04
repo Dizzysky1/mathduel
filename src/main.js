@@ -677,7 +677,7 @@ class OnlineGame {
   }
 
   requestRematch() {
-    if (this.rematch.me || !this.over || !this.match || !this.net.conn) return;
+    if (this.rematch.me || !this.over || !this.match || !this.net.connected) return;
     this.rematch.me = true;
     this.net.send({ t: 'rematch' });
     $('btn-rematch').disabled = true;
@@ -765,6 +765,7 @@ async function hostOnline() {
     show('lobby');
     const game = new OnlineGame(settings, net);
     active = game;
+    net.on('status', (text) => { if (active === game) $('lobby-status').textContent = text; });
     net.on('open', () => {
       if (active !== game) return; // user moved on before the opponent arrived
       $('lobby-status').textContent = 'Opponent connected. Starting…';
@@ -792,10 +793,11 @@ async function joinOnline() {
   $('lobby-status').textContent = 'Connecting to host…';
   show('lobby');
   const net = new NetSession();
+  net.on('status', (text) => { $('lobby-status').textContent = text; });
   try {
     await net.join(code);
     active = new OnlineGame(settings, net);
-    $('lobby-status').textContent = 'Connected. Waiting for host…';
+    $('lobby-status').textContent = net.transport === 'relay' ? 'Connected via relay. Waiting for host…' : 'Connected. Waiting for host…';
   } catch (e) {
     net.close();
     show('home');

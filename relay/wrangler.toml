@@ -1,0 +1,15 @@
+name = "mathduel-relay"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+# Comma-separated list of page origins allowed to use the relay.
+ALLOWED_ORIGINS = "https://dizzysky1.github.io,http://localhost:3019"
+
+[durable_objects]
+bindings = [{ name = "ROOMS", class_name = "Room" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

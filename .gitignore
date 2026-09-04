@@ -5,3 +5,5 @@ Thumbs.db
 *.log
 _site/
 .claude/
+relay/node_modules/
+relay/.wrangler/
